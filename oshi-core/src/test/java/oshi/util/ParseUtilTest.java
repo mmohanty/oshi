@@ -1,35 +1,46 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.util;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.time.Instant;
 import java.util.Arrays;
+import java.util.List;
 
 import org.junit.Test;
+
+import oshi.util.tuples.Pair;
 
 /**
  * The Class ParseUtilTest.
  */
 public class ParseUtilTest {
-
     /**
      * Test parse hertz.
      */
@@ -57,11 +68,18 @@ public class ParseUtilTest {
         assertEquals(1, ParseUtil.parseLastInt("foo : 1", 0));
         assertEquals(2, ParseUtil.parseLastInt("foo", 2));
         assertEquals(3, ParseUtil.parseLastInt("max_int plus one is 2147483648", 3));
+        assertEquals(255, ParseUtil.parseLastInt("0xff", 4));
 
         assertEquals(-1L, ParseUtil.parseLastLong("foo : bar", -1L));
         assertEquals(1L, ParseUtil.parseLastLong("foo : 1", 0L));
         assertEquals(2L, ParseUtil.parseLastLong("foo", 2L));
         assertEquals(2147483648L, ParseUtil.parseLastLong("max_int plus one is 2147483648", 3L));
+        assertEquals(255L, ParseUtil.parseLastLong("0xff", 0L));
+
+        double epsilon = 1.1102230246251565E-16;
+        assertEquals(-1d, ParseUtil.parseLastDouble("foo : bar", -1d), epsilon);
+        assertEquals(1.0, ParseUtil.parseLastDouble("foo : 1.0", 0d), epsilon);
+        assertEquals(2d, ParseUtil.parseLastDouble("foo", 2d), epsilon);
     }
 
     /**
@@ -93,7 +111,7 @@ public class ParseUtilTest {
     @Test
     public void testStringToByteArray() {
         byte[] temp = { (byte) '1', (byte) '2', (byte) 'a', (byte) 'f', (byte) 0 };
-        assertTrue(Arrays.equals(temp, ParseUtil.stringToByteArray("12af", 5)));
+        assertTrue(Arrays.equals(temp, ParseUtil.asciiStringToByteArray("12af", 5)));
     }
 
     /**
@@ -150,6 +168,16 @@ public class ParseUtilTest {
         assertEquals(0L, ParseUtil.unsignedIntToLong(0));
         assertEquals(123L, ParseUtil.unsignedIntToLong(123));
         assertEquals(4294967295L, ParseUtil.unsignedIntToLong(0xffffffff));
+    }
+
+    /**
+     * Test unsigned long to signed long
+     */
+    @Test
+    public void testUnsignedLongToSignedLong() {
+        assertEquals(1L, ParseUtil.unsignedLongToSignedLong(Long.MAX_VALUE + 2));
+        assertEquals(123L, ParseUtil.unsignedLongToSignedLong(123));
+        assertEquals(9223372036854775807L, ParseUtil.unsignedLongToSignedLong(9223372036854775807L));
     }
 
     /**
@@ -214,7 +242,8 @@ public class ParseUtilTest {
         assertEquals(7384000L, ParseUtil.parseDHMSOrDefault("02:03:04", 0L));
         assertEquals(184050L, ParseUtil.parseDHMSOrDefault("03:04.05", 0L));
         assertEquals(184000L, ParseUtil.parseDHMSOrDefault("03:04", 0L));
-        assertEquals(0L, ParseUtil.parseDHMSOrDefault("04", 0L));
+        assertEquals(4000L, ParseUtil.parseDHMSOrDefault("04", 0L));
+        assertEquals(0L, ParseUtil.parseDHMSOrDefault("04:05-06", 0L));
     }
 
     /**
@@ -236,6 +265,21 @@ public class ParseUtilTest {
     public void testGetSingleQuoteStringValue() {
         assertEquals("bar", ParseUtil.getSingleQuoteStringValue("foo = 'bar' (string)"));
         assertEquals("", ParseUtil.getSingleQuoteStringValue("foo = bar (string)"));
+    }
+
+    @Test
+    public void testGetDoubleQuoteStringValue() {
+        assertEquals("bar", ParseUtil.getDoubleQuoteStringValue("foo = \"bar\" (string)"));
+        assertEquals("", ParseUtil.getDoubleQuoteStringValue("hello"));
+    }
+
+    /**
+     * Test parse SingleQuoteBetweenMultipleQuotes
+     */
+    @Test
+    public void testGetStringBetweenMultipleQuotes() {
+        assertEquals("hello $ is", ParseUtil.getStringBetween("hello = $hello $ is $", '$'));
+        assertEquals("Realtek AC'97 Audio", ParseUtil.getStringBetween("pci.device = 'Realtek AC'97 Audio'", '\''));
     }
 
     /**
@@ -282,22 +326,36 @@ public class ParseUtilTest {
         long now = System.currentTimeMillis();
 
         String foo = String.format("The numbers are %d %d %d %d", 123, 456, 789, now);
+        int count = ParseUtil.countStringToLongArray(foo, ' ');
+        assertEquals(4, count);
         long[] result = ParseUtil.parseStringToLongArray(foo, indices, 4, ' ');
         assertEquals(456L, result[0]);
         assertEquals(now, result[1]);
 
+        foo = String.format("The numbers are %d %d %d %d %s", 123, 456, 789, now,
+                "709af748-5f8e-41b3-b73a-b440ef4406c8");
+        count = ParseUtil.countStringToLongArray(foo, ' ');
+        assertEquals(4, count);
+        result = ParseUtil.parseStringToLongArray(foo, indices, 4, ' ');
+        assertEquals(456L, result[0]);
+        assertEquals(now, result[1]);
+
         foo = String.format("The numbers are %d -%d %d +%d", 123, 456, 789, now);
+        count = ParseUtil.countStringToLongArray(foo, ' ');
+        assertEquals(4, count);
         result = ParseUtil.parseStringToLongArray(foo, indices, 4, ' ');
         assertEquals(-456L, result[0]);
         assertEquals(now, result[1]);
 
         foo = String.format("Invalid character %d %s %d %d", 123, "4v6", 789, now);
+        count = ParseUtil.countStringToLongArray(foo, ' ');
+        assertEquals(2, count);
         result = ParseUtil.parseStringToLongArray(foo, indices, 4, ' ');
         assertEquals(0, result[1]);
 
-        foo = String.format("Exceeds max long %d %d %d %d0", 123, 456, 789, Long.MAX_VALUE);
+        foo = String.format("Exceeds max long %d %d %d 1%d", 123, 456, 789, Long.MAX_VALUE);
         result = ParseUtil.parseStringToLongArray(foo, indices, 4, ' ');
-        assertEquals(0, result[1]);
+        assertEquals(Long.MAX_VALUE, result[1]);
 
         foo = String.format("String too short %d %d %d %d", 123, 456, 789, now);
         result = ParseUtil.parseStringToLongArray(foo, indices, 9, ' ');
@@ -306,5 +364,156 @@ public class ParseUtilTest {
         foo = String.format("Array too short %d %d %d %d", 123, 456, 789, now);
         result = ParseUtil.parseStringToLongArray(foo, indices, 2, ' ');
         assertEquals(0, result[1]);
+
+        foo = String.format("%d %d %d %d", 123, 456, 789, now);
+        count = ParseUtil.countStringToLongArray(foo, ' ');
+        assertEquals(4, count);
+
+        foo = String.format("%d %d %d %d nonNumeric", 123, 456, 789, now);
+        count = ParseUtil.countStringToLongArray(foo, ' ');
+        assertEquals(4, count);
+
+        foo = String.format("%d %d %d %d 123-456", 123, 456, 789, now);
+        count = ParseUtil.countStringToLongArray(foo, ' ');
+        assertEquals(4, count);
+    }
+
+    @Test
+    public void testTextBetween() {
+        String text = "foo bar baz";
+        String before = "foo";
+        String after = "baz";
+        assertEquals(" bar ", ParseUtil.getTextBetweenStrings(text, before, after));
+
+        before = "";
+        assertEquals("foo bar ", ParseUtil.getTextBetweenStrings(text, before, after));
+
+        before = "food";
+        assertEquals("", ParseUtil.getTextBetweenStrings(text, before, after));
+
+        before = "foo";
+        after = "qux";
+        assertEquals("", ParseUtil.getTextBetweenStrings(text, before, after));
+
+    }
+
+    @Test
+    public void testFiletimeToMs() {
+        assertEquals(1172163600306L, ParseUtil.filetimeToUtcMs(128166372003061629L, false));
+    }
+
+    @Test
+    public void testParseCimDateTimeToOffset() {
+        String cimDateTime = "20160513072950.782000-420";
+        // 2016-05-13T07:29:50 == 1463124590
+        // Add 420 minutes to get unix seconds
+        Instant timeInst = Instant.ofEpochMilli(1463124590_782L + 60 * 420_000L);
+        assertEquals(timeInst, ParseUtil.parseCimDateTimeToOffset(cimDateTime).toInstant());
+        assertEquals(Instant.EPOCH, ParseUtil.parseCimDateTimeToOffset("Not a datetime").toInstant());
+    }
+
+    @Test
+    public void testFilePathStartsWith() {
+        List<String> prefixList = Arrays.asList("/foo", "/bar");
+        assertEquals(true, ParseUtil.filePathStartsWith(prefixList, "/foo"));
+        assertEquals(true, ParseUtil.filePathStartsWith(prefixList, "/foo/bar"));
+        assertEquals(false, ParseUtil.filePathStartsWith(prefixList, "/foobar"));
+        assertEquals(true, ParseUtil.filePathStartsWith(prefixList, "/foo/baz"));
+        assertEquals(false, ParseUtil.filePathStartsWith(prefixList, "/baz/foo"));
+    }
+
+    @Test
+    public void testParseDecimalMemorySizeToBinary() {
+        assertEquals(0, ParseUtil.parseDecimalMemorySizeToBinary("Not a number"));
+        assertEquals(1, ParseUtil.parseDecimalMemorySizeToBinary("1"));
+        assertEquals(1024, ParseUtil.parseDecimalMemorySizeToBinary("1 kB"));
+        assertEquals(1024, ParseUtil.parseDecimalMemorySizeToBinary("1 KB"));
+        assertEquals(1_048_576, ParseUtil.parseDecimalMemorySizeToBinary("1 MB"));
+        assertEquals(1_073_741_824, ParseUtil.parseDecimalMemorySizeToBinary("1 GB"));
+        assertEquals(1_099_511_627_776L, ParseUtil.parseDecimalMemorySizeToBinary("1 TB"));
+    }
+
+    @Test
+    public void testParsePnPDeviceIdToVendorProductId() {
+        Pair<String, String> idPair = ParseUtil
+                .parsePnPDeviceIdToVendorProductId("PCI\\VEN_10DE&DEV_134B&SUBSYS_00081414&REV_A2\\4&25BACB6&0&00E0");
+        assertNotNull(idPair);
+        assertEquals("0x10de", idPair.getA());
+        assertEquals("0x134b", idPair.getB());
+
+        idPair = ParseUtil
+                .parsePnPDeviceIdToVendorProductId("PCI\\VEN_80286&DEV_19116&SUBSYS_00141414&REV_07\\3&11583659&0&10");
+        assertNull(idPair);
+    }
+
+    @Test
+    public void testParseLshwResourceString() {
+        assertEquals(268_435_456L + 65_536L, ParseUtil.parseLshwResourceString(
+                "irq:46 ioport:6000(size=32) memory:b0000000-bfffffff memory:e2000000-e200ffff"));
+        assertEquals(268_435_456L, ParseUtil.parseLshwResourceString(
+                "irq:46 ioport:6000(size=32) memory:b0000000-bfffffff memory:x2000000-e200ffff"));
+        assertEquals(65_536L, ParseUtil.parseLshwResourceString(
+                "irq:46 ioport:6000(size=32) memory:x0000000-bfffffff memory:e2000000-e200ffff"));
+        assertEquals(0, ParseUtil.parseLshwResourceString("some random string"));
+    }
+
+    @Test
+    public void testParseLspciMachineReadable() {
+        Pair<String, String> pair = ParseUtil.parseLspciMachineReadable("foo [bar]");
+        assertEquals("foo", pair.getA());
+        assertEquals("bar", pair.getB());
+        assertNull(ParseUtil.parseLspciMachineReadable("Bad format"));
+    }
+
+    @Test
+    public void testParseLspciMemorySize() {
+        assertEquals(0, ParseUtil.parseLspciMemorySize("Doesn't parse"));
+        assertEquals(64 * 1024, ParseUtil.parseLspciMemorySize("Foo [size=64K]"));
+        assertEquals(256 * 1024 * 1024, ParseUtil.parseLspciMemorySize("Foo [size=256M]"));
+    }
+
+    @Test
+    public void testParseHyphenatedIntList() {
+        String s = "1";
+        List<Integer> parsed = ParseUtil.parseHyphenatedIntList(s);
+        assertFalse(parsed.contains(0));
+        assertTrue(parsed.contains(1));
+
+        s = "0 2-5 7";
+        parsed = ParseUtil.parseHyphenatedIntList(s);
+        assertTrue(parsed.contains(0));
+        assertFalse(parsed.contains(1));
+        assertTrue(parsed.contains(2));
+        assertTrue(parsed.contains(3));
+        assertTrue(parsed.contains(4));
+        assertTrue(parsed.contains(5));
+        assertFalse(parsed.contains(6));
+        assertTrue(parsed.contains(7));
+    }
+
+    @Test
+    public void testParseMmDdYyyyToYyyyMmDD() {
+        assertEquals("Unable to parse MM-DD-YYYY date string into YYYY-MM-DD date string", "2222-00-11",
+                ParseUtil.parseMmDdYyyyToYyyyMmDD("00-11-2222"));
+        assertEquals("Date string should not be parsed", "badstr", ParseUtil.parseMmDdYyyyToYyyyMmDD("badstr"));
+    }
+
+    @Test
+    public void testParseUtAddrV6toIP() {
+        int[] zero = { 0, 0, 0, 0 };
+        int[] loopback = { 0, 0, 0, 1 };
+        String v6test = "2001:db8:85a3::8a2e:370:7334";
+        int[] v6 = new int[4];
+        v6[0] = Integer.parseUnsignedInt("20010db8", 16);
+        v6[1] = Integer.parseUnsignedInt("85a30000", 16);
+        v6[2] = Integer.parseUnsignedInt("00008a2e", 16);
+        v6[3] = Integer.parseUnsignedInt("03707334", 16);
+        String v4test = "127.0.0.1";
+        int[] v4 = new int[4];
+        v4[0] = (127 << 24) + 1;
+        assertEquals("Unspecified address failed", "::", ParseUtil.parseUtAddrV6toIP(zero));
+        assertEquals("Loopback address failed", "::1", ParseUtil.parseUtAddrV6toIP(loopback));
+        assertEquals("V6 parsing failed", v6test, ParseUtil.parseUtAddrV6toIP(v6));
+        assertEquals("V4 parsig failed", v4test, ParseUtil.parseUtAddrV6toIP(v4));
     }
 }

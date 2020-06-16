@@ -1,114 +1,90 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware.platform.mac;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.sun.jna.Native; // NOSONAR
+import com.sun.jna.platform.mac.SystemB;
 import com.sun.jna.platform.mac.SystemB.HostCpuLoadInfo;
+import com.sun.jna.platform.mac.SystemB.VMMeter;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
 
+import oshi.annotation.concurrent.ThreadSafe;
 import oshi.hardware.common.AbstractCentralProcessor;
-import oshi.jna.platform.mac.SystemB;
-import oshi.jna.platform.mac.SystemB.VMMeter;
-import oshi.jna.platform.unix.CLibrary.Timeval;
-import oshi.util.ExecutingCommand;
 import oshi.util.FormatUtil;
 import oshi.util.ParseUtil;
 import oshi.util.platform.mac.SysctlUtil;
 
 /**
  * A CPU.
- *
- * @author alessandro[at]perucchi[dot]org
- * @author alessio.fachechi[at]gmail[dot]com
- * @author widdis[at]gmail[dot]com
  */
-public class MacCentralProcessor extends AbstractCentralProcessor {
-
-    private static final long serialVersionUID = 1L;
+@ThreadSafe
+final class MacCentralProcessor extends AbstractCentralProcessor {
 
     private static final Logger LOG = LoggerFactory.getLogger(MacCentralProcessor.class);
 
-    private static final long BOOTTIME;
-    static {
-        Timeval tv = new Timeval();
-        if (!SysctlUtil.sysctl("kern.boottime", tv) || tv.tv_sec == 0) {
-            // Usually this works. If it doesn't, fall back to text parsing.
-            // Boot time will be the first consecutive string of digits.
-            BOOTTIME = ParseUtil.parseLongOrDefault(
-                    ExecutingCommand.getFirstAnswer("sysctl -n kern.boottime").split(",")[0].replaceAll("\\D", ""),
-                    System.currentTimeMillis() / 1000);
-        } else {
-            // tv now points to a 64-bit timeval structure for boot time.
-            // First 4 bytes are seconds, second 4 bytes are microseconds
-            // (we ignore)
-            BOOTTIME = tv.tv_sec;
-        }
-    }
-
-    /**
-     * Create a Processor
-     */
-    public MacCentralProcessor() {
-        super();
-        // Initialize class variables
-        initVars();
-        // Initialize tick arrays
-        initTicks();
-
-        LOG.debug("Initialized Processor");
-    }
-
-    private void initVars() {
-        setVendor(SysctlUtil.sysctl("machdep.cpu.vendor", ""));
-        setName(SysctlUtil.sysctl("machdep.cpu.brand_string", ""));
-        setCpu64(SysctlUtil.sysctl("hw.cpu64bit_capable", 0) != 0);
+    @Override
+    protected ProcessorIdentifier queryProcessorId() {
+        String cpuVendor = SysctlUtil.sysctl("machdep.cpu.vendor", "");
+        String cpuName = SysctlUtil.sysctl("machdep.cpu.brand_string", "");
         int i = SysctlUtil.sysctl("machdep.cpu.stepping", -1);
-        setStepping(i < 0 ? "" : Integer.toString(i));
+        String cpuStepping = i < 0 ? "" : Integer.toString(i);
         i = SysctlUtil.sysctl("machdep.cpu.model", -1);
-        setModel(i < 0 ? "" : Integer.toString(i));
+        String cpuModel = i < 0 ? "" : Integer.toString(i);
         i = SysctlUtil.sysctl("machdep.cpu.family", -1);
-        setFamily(i < 0 ? "" : Integer.toString(i));
-        long processorID = 0L;
-        processorID |= SysctlUtil.sysctl("machdep.cpu.signature", 0);
-        processorID |= (SysctlUtil.sysctl("machdep.cpu.feature_bits", 0L) & 0xffffffff) << 32;
-        setProcessorID(String.format("%016X", processorID));
+        String cpuFamily = i < 0 ? "" : Integer.toString(i);
+        long processorIdBits = 0L;
+        processorIdBits |= SysctlUtil.sysctl("machdep.cpu.signature", 0);
+        processorIdBits |= (SysctlUtil.sysctl("machdep.cpu.feature_bits", 0L) & 0xffffffff) << 32;
+        String processorID = String.format("%016X", processorIdBits);
+        boolean cpu64bit = SysctlUtil.sysctl("hw.cpu64bit_capable", 0) != 0;
+
+        return new ProcessorIdentifier(cpuVendor, cpuName, cpuFamily, cpuModel, cpuStepping, processorID, cpu64bit);
     }
 
-    /**
-     * Updates logical and physical processor counts from sysctl calls
-     */
     @Override
-    protected void calculateProcessorCounts() {
-        this.logicalProcessorCount = SysctlUtil.sysctl("hw.logicalcpu", 1);
-        this.physicalProcessorCount = SysctlUtil.sysctl("hw.physicalcpu", 1);
-        this.physicalPackageCount = SysctlUtil.sysctl("hw.packages", 1);
+    protected List<LogicalProcessor> initProcessorCounts() {
+        int logicalProcessorCount = SysctlUtil.sysctl("hw.logicalcpu", 1);
+        int physicalProcessorCount = SysctlUtil.sysctl("hw.physicalcpu", 1);
+        int physicalPackageCount = SysctlUtil.sysctl("hw.packages", 1);
+        List<LogicalProcessor> logProcs = new ArrayList<>(logicalProcessorCount);
+        for (int i = 0; i < logicalProcessorCount; i++) {
+            logProcs.add(new LogicalProcessor(i, i * physicalProcessorCount / logicalProcessorCount,
+                    i * physicalPackageCount / logicalProcessorCount));
+        }
+        return logProcs;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long[] getSystemCpuLoadTicks() {
+    public long[] querySystemCpuLoadTicks() {
         long[] ticks = new long[TickType.values().length];
         int machPort = SystemB.INSTANCE.mach_host_self();
         HostCpuLoadInfo cpuLoadInfo = new HostCpuLoadInfo();
@@ -126,9 +102,18 @@ public class MacCentralProcessor extends AbstractCentralProcessor {
         return ticks;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    @Override
+    public long[] queryCurrentFreq() {
+        long[] freqs = new long[getLogicalProcessorCount()];
+        Arrays.fill(freqs, SysctlUtil.sysctl("hw.cpufrequency", -1L));
+        return freqs;
+    }
+
+    @Override
+    public long queryMaxFreq() {
+        return SysctlUtil.sysctl("hw.cpufrequency_max", -1L);
+    }
+
     @Override
     public double[] getSystemLoadAverage(int nelem) {
         if (nelem < 1 || nelem > 3) {
@@ -137,19 +122,14 @@ public class MacCentralProcessor extends AbstractCentralProcessor {
         double[] average = new double[nelem];
         int retval = SystemB.INSTANCE.getloadavg(average, nelem);
         if (retval < nelem) {
-            for (int i = Math.max(retval, 0); i < average.length; i++) {
-                average[i] = -1d;
-            }
+            Arrays.fill(average, -1d);
         }
         return average;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long[][] getProcessorCpuLoadTicks() {
-        long[][] ticks = new long[this.logicalProcessorCount][TickType.values().length];
+    public long[][] queryProcessorCpuLoadTicks() {
+        long[][] ticks = new long[getLogicalProcessorCount()][TickType.values().length];
 
         int machPort = SystemB.INSTANCE.mach_host_self();
 
@@ -174,28 +154,8 @@ public class MacCentralProcessor extends AbstractCentralProcessor {
         return ticks;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long getSystemUptime() {
-        return System.currentTimeMillis() / 1000 - BOOTTIME;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    @Deprecated
-    public String getSystemSerialNumber() {
-        return new MacComputerSystem().getSerialNumber();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public long getContextSwitches() {
+    public long queryContextSwitches() {
         int machPort = SystemB.INSTANCE.mach_host_self();
         VMMeter vmstats = new VMMeter();
         if (0 != SystemB.INSTANCE.host_statistics(machPort, SystemB.HOST_VM_INFO, vmstats,
@@ -206,11 +166,8 @@ public class MacCentralProcessor extends AbstractCentralProcessor {
         return ParseUtil.unsignedIntToLong(vmstats.v_swtch);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long getInterrupts() {
+    public long queryInterrupts() {
         int machPort = SystemB.INSTANCE.mach_host_self();
         VMMeter vmstats = new VMMeter();
         if (0 != SystemB.INSTANCE.host_statistics(machPort, SystemB.HOST_VM_INFO, vmstats,

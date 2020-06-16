@@ -1,24 +1,30 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware;
 
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -36,23 +42,25 @@ public class ComputerSystemTest {
     public void testComputerSystem() {
         SystemInfo si = new SystemInfo();
         ComputerSystem cs = si.getHardware().getComputerSystem();
-        assertNotNull(cs.getManufacturer());
-        assertNotNull(cs.getModel());
-        assertNotNull(cs.getSerialNumber());
+        assertNotNull("Computer System's manufacturer shouldn't be null", cs.getManufacturer());
+        assertNotNull("Computer System's model shouldn't be null", cs.getModel());
+        assertNotNull("Computer System's serial number shouldn't be null", cs.getSerialNumber());
 
         Firmware fw = cs.getFirmware();
-        assertNotNull(fw);
-        assertNotNull(fw.getManufacturer());
-        assertNotNull(fw.getName());
-        assertNotNull(fw.getDescription());
-        assertNotNull(fw.getVersion());
-        assertNotNull(fw.getReleaseDate());
+        assertNotNull("Firmware shouldn't be null", fw);
+        assertNotNull("Firmware's manufacturer shouldn't be null", fw.getManufacturer());
+        assertNotNull("Firmware's name shouldn't be null", fw.getName());
+        assertNotNull("Firmware's description shouldn't be null", fw.getDescription());
+        assertNotNull("Firmware's version shouldn't be null", fw.getVersion());
+        assertNotNull("Firmware's release date shouldn't be null", fw.getReleaseDate());
+        assertTrue("Firmware's tostring value should contain manufacturer's name",
+                fw.toString().contains(fw.getManufacturer()));
 
         Baseboard bb = cs.getBaseboard();
-        assertNotNull(bb);
-        assertNotNull(bb.getManufacturer());
-        assertNotNull(bb.getModel());
-        assertNotNull(bb.getVersion());
-        assertNotNull(bb.getSerialNumber());
+        assertNotNull("Baseboard shouldn't be null", bb);
+        assertNotNull("Baseboard's manufacturer shouldn't be null", bb.getManufacturer());
+        assertNotNull("Baseboard's model shouldn't be null", bb.getModel());
+        assertNotNull("Baseboard's version shouldn't be null", bb.getVersion());
+        assertNotNull("Baseboard's serial number shouldn't be null", bb.getSerialNumber());
     }
 }

@@ -1,116 +1,127 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware.platform.unix.solaris;
 
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Map;
 
 import com.sun.jna.platform.unix.solaris.LibKstat.Kstat; // NOSONAR
 
+import oshi.annotation.concurrent.ThreadSafe;
 import oshi.hardware.common.AbstractCentralProcessor;
-import oshi.jna.platform.linux.Libc;
+import oshi.jna.platform.unix.solaris.SolarisLibc;
 import oshi.util.ExecutingCommand;
 import oshi.util.ParseUtil;
 import oshi.util.platform.unix.solaris.KstatUtil;
+import oshi.util.platform.unix.solaris.KstatUtil.KstatChain;
 
 /**
  * A CPU
- *
- * @author widdis[at]gmail[dot]com
  */
-public class SolarisCentralProcessor extends AbstractCentralProcessor {
+@ThreadSafe
+final class SolarisCentralProcessor extends AbstractCentralProcessor {
 
-    private static final long serialVersionUID = 1L;
+    private static final String CPU_INFO = "cpu_info";
 
-    private static final Logger LOG = LoggerFactory.getLogger(SolarisCentralProcessor.class);
-
-    /**
-     * Create a Processor
-     */
-    public SolarisCentralProcessor() {
-        super();
-        // Initialize class variables
-        initVars();
-        // Initialize tick arrays
-        initTicks();
-
-        LOG.debug("Initialized Processor");
-    }
-
-    private void initVars() {
-        // Get first result
-        Kstat ksp = KstatUtil.kstatLookup("cpu_info", -1, null);
-        // Set values
-        if (ksp != null && KstatUtil.kstatRead(ksp)) {
-            setVendor(KstatUtil.kstatDataLookupString(ksp, "vendor_id"));
-            setName(KstatUtil.kstatDataLookupString(ksp, "brand"));
-            setStepping(KstatUtil.kstatDataLookupString(ksp, "stepping"));
-            setModel(KstatUtil.kstatDataLookupString(ksp, "model"));
-            setFamily(KstatUtil.kstatDataLookupString(ksp, "family"));
-        }
-        setCpu64("64".equals(ExecutingCommand.getFirstAnswer("isainfo -b").trim()));
-        setProcessorID(getProcessorID(getStepping(), getModel(), getFamily()));
-
-    }
-
-    /**
-     * Updates logical and physical processor counts from psrinfo
-     */
     @Override
-    protected void calculateProcessorCounts() {
-        List<Kstat> kstats = KstatUtil.kstatLookupAll("cpu_info", -1, null);
-        Set<String> chipIDs = new HashSet<>();
-        Set<String> coreIDs = new HashSet<>();
-        this.logicalProcessorCount = 0;
-        for (Kstat ksp : kstats) {
-            if (ksp != null && KstatUtil.kstatRead(ksp)) {
-                this.logicalProcessorCount++;
-                chipIDs.add(KstatUtil.kstatDataLookupString(ksp, "chip_id"));
-                coreIDs.add(KstatUtil.kstatDataLookupString(ksp, "core_id"));
+    protected ProcessorIdentifier queryProcessorId() {
+        String cpuVendor = "";
+        String cpuName = "";
+        String cpuFamily = "";
+        String cpuModel = "";
+        String cpuStepping = "";
+
+        // Get first result
+        try (KstatChain kc = KstatUtil.openChain()) {
+            Kstat ksp = kc.lookup(CPU_INFO, -1, null);
+            // Set values
+            if (ksp != null && kc.read(ksp)) {
+                cpuVendor = KstatUtil.dataLookupString(ksp, "vendor_id");
+                cpuName = KstatUtil.dataLookupString(ksp, "brand");
+                cpuFamily = KstatUtil.dataLookupString(ksp, "family");
+                cpuModel = KstatUtil.dataLookupString(ksp, "model");
+                cpuStepping = KstatUtil.dataLookupString(ksp, "stepping");
             }
         }
+        boolean cpu64bit = "64".equals(ExecutingCommand.getFirstAnswer("isainfo -b").trim());
+        String processorID = getProcessorID(cpuStepping, cpuModel, cpuFamily);
 
-        this.physicalPackageCount = chipIDs.size();
-        if (this.physicalPackageCount < 1) {
-            LOG.error("Couldn't find physical package count. Assuming 1.");
-            this.physicalPackageCount = 1;
-        }
-        this.physicalProcessorCount = coreIDs.size();
-        if (this.physicalProcessorCount < 1) {
-            LOG.error("Couldn't find physical processor count. Assuming 1.");
-            this.physicalProcessorCount = 1;
-        }
-        if (this.logicalProcessorCount < 1) {
-            LOG.error("Couldn't find logical processor count. Assuming 1.");
-            this.logicalProcessorCount = 1;
-        }
+        return new ProcessorIdentifier(cpuVendor, cpuName, cpuFamily, cpuModel, cpuStepping, processorID, cpu64bit);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public synchronized long[] getSystemCpuLoadTicks() {
+    protected List<LogicalProcessor> initProcessorCounts() {
+        Map<Integer, Integer> numaNodeMap = mapNumaNodes();
+        List<LogicalProcessor> logProcs = new ArrayList<>();
+        try (KstatChain kc = KstatUtil.openChain()) {
+            List<Kstat> kstats = kc.lookupAll(CPU_INFO, -1, null);
+
+            for (Kstat ksp : kstats) {
+                if (ksp != null && kc.read(ksp)) {
+                    int procId = logProcs.size(); // 0-indexed
+                    String chipId = KstatUtil.dataLookupString(ksp, "chip_id");
+                    String coreId = KstatUtil.dataLookupString(ksp, "core_id");
+                    LogicalProcessor logProc = new LogicalProcessor(procId, ParseUtil.parseIntOrDefault(coreId, 0),
+                            ParseUtil.parseIntOrDefault(chipId, 0), numaNodeMap.getOrDefault(procId, 0));
+                    logProcs.add(logProc);
+                }
+            }
+        }
+        if (logProcs.isEmpty()) {
+            logProcs.add(new LogicalProcessor(0, 0, 0));
+        }
+        return logProcs;
+    }
+
+    private static Map<Integer, Integer> mapNumaNodes() {
+        // Get numa node info from lgrpinfo
+        Map<Integer, Integer> numaNodeMap = new HashMap<>();
+        int lgroup = 0;
+        for (String line : ExecutingCommand.runNative("lgrpinfo -c leaves")) {
+            // Format:
+            // lgroup 0 (root):
+            // CPUs: 0 1
+            // CPUs: 0-7
+            // CPUs: 0-3 6 7 12 13
+            // CPU: 0
+            // CPU: 1
+            if (line.startsWith("lgroup")) {
+                lgroup = ParseUtil.getFirstIntValue(line);
+            } else if (line.contains("CPUs:") || line.contains("CPU:")) {
+                for (Integer cpu : ParseUtil.parseHyphenatedIntList(line.split(":")[1])) {
+                    numaNodeMap.put(cpu, lgroup);
+                }
+            }
+        }
+        return numaNodeMap;
+    }
+
+    @Override
+    public long[] querySystemCpuLoadTicks() {
         long[] ticks = new long[TickType.values().length];
         // Average processor ticks
         long[][] procTicks = getProcessorCpuLoadTicks();
@@ -123,16 +134,50 @@ public class SolarisCentralProcessor extends AbstractCentralProcessor {
         return ticks;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    @Override
+    public long[] queryCurrentFreq() {
+        long[] freqs = new long[getLogicalProcessorCount()];
+        Arrays.fill(freqs, -1);
+        try (KstatChain kc = KstatUtil.openChain()) {
+            for (int i = 0; i < freqs.length; i++) {
+                for (Kstat ksp : kc.lookupAll(CPU_INFO, i, null)) {
+                    if (kc.read(ksp)) {
+                        freqs[i] = KstatUtil.dataLookupLong(ksp, "current_clock_Hz");
+                    }
+                }
+            }
+        }
+        return freqs;
+    }
+
+    @Override
+    public long queryMaxFreq() {
+        long max = -1L;
+        try (KstatChain kc = KstatUtil.openChain()) {
+            for (Kstat ksp : kc.lookupAll(CPU_INFO, 0, null)) {
+                if (kc.read(ksp)) {
+                    String suppFreq = KstatUtil.dataLookupString(ksp, "supported_frequencies_Hz");
+                    if (!suppFreq.isEmpty()) {
+                        for (String s : suppFreq.split(":")) {
+                            long freq = ParseUtil.parseLongOrDefault(s, -1L);
+                            if (max < freq) {
+                                max = freq;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return max;
+    }
+
     @Override
     public double[] getSystemLoadAverage(int nelem) {
         if (nelem < 1 || nelem > 3) {
             throw new IllegalArgumentException("Must include from one to three elements.");
         }
         double[] average = new double[nelem];
-        int retval = Libc.INSTANCE.getloadavg(average, nelem);
+        int retval = SolarisLibc.INSTANCE.getloadavg(average, nelem);
         if (retval < nelem) {
             for (int i = Math.max(retval, 0); i < average.length; i++) {
                 average[i] = -1d;
@@ -141,60 +186,40 @@ public class SolarisCentralProcessor extends AbstractCentralProcessor {
         return average;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long[][] getProcessorCpuLoadTicks() {
-        long[][] ticks = new long[this.logicalProcessorCount][TickType.values().length];
+    public long[][] queryProcessorCpuLoadTicks() {
+        long[][] ticks = new long[getLogicalProcessorCount()][TickType.values().length];
         int cpu = -1;
-        for (Kstat ksp : KstatUtil.kstatLookupAll("cpu", -1, "sys")) {
-            // This is a new CPU
-            if (++cpu >= ticks.length) {
-                // Shouldn't happen
-                break;
-            }
-            if (KstatUtil.kstatRead(ksp)) {
-                ticks[cpu][TickType.IDLE.getIndex()] = KstatUtil.kstatDataLookupLong(ksp, "cpu_ticks_idle");
-                ticks[cpu][TickType.SYSTEM.getIndex()] = KstatUtil.kstatDataLookupLong(ksp, "cpu_ticks_kernel");
-                ticks[cpu][TickType.USER.getIndex()] = KstatUtil.kstatDataLookupLong(ksp, "cpu_ticks_user");
+        try (KstatChain kc = KstatUtil.openChain()) {
+            for (Kstat ksp : kc.lookupAll("cpu", -1, "sys")) {
+                // This is a new CPU
+                if (++cpu >= ticks.length) {
+                    // Shouldn't happen
+                    break;
+                }
+                if (kc.read(ksp)) {
+                    ticks[cpu][TickType.IDLE.getIndex()] = KstatUtil.dataLookupLong(ksp, "cpu_ticks_idle");
+                    ticks[cpu][TickType.SYSTEM.getIndex()] = KstatUtil.dataLookupLong(ksp, "cpu_ticks_kernel");
+                    ticks[cpu][TickType.USER.getIndex()] = KstatUtil.dataLookupLong(ksp, "cpu_ticks_user");
+                }
             }
         }
         return ticks;
     }
 
     /**
-     * {@inheritDoc}
-     */
-    @Override
-    public long getSystemUptime() {
-        Kstat ksp = KstatUtil.kstatLookup("unix", 0, "system_misc");
-        if (ksp == null) {
-            return 0L;
-        }
-        // Snap Time is in nanoseconds; divide for seconds
-        return ksp.ks_snaptime / 1000000000L;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    @Deprecated
-    public String getSystemSerialNumber() {
-        return new SolarisComputerSystem().getSerialNumber();
-    }
-
-    /**
-     * Fetches the ProcessorID by encoding the stepping, model, family, and
-     * feature flags.
+     * Fetches the ProcessorID by encoding the stepping, model, family, and feature
+     * flags.
      *
      * @param stepping
+     *            The stepping
      * @param model
+     *            The model
      * @param family
+     *            The family
      * @return The Processor ID string
      */
-    private String getProcessorID(String stepping, String model, String family) {
+    private static String getProcessorID(String stepping, String model, String family) {
         List<String> isainfo = ExecutingCommand.runNative("isainfo -v");
         StringBuilder flags = new StringBuilder();
         for (String line : isainfo) {
@@ -207,11 +232,8 @@ public class SolarisCentralProcessor extends AbstractCentralProcessor {
         return createProcessorID(stepping, model, family, ParseUtil.whitespaces.split(flags.toString().toLowerCase()));
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long getContextSwitches() {
+    public long queryContextSwitches() {
         long swtch = 0;
         List<String> kstat = ExecutingCommand.runNative("kstat -p cpu_stat:::/pswitch\\\\|inv_swtch/");
         for (String s : kstat) {
@@ -220,11 +242,8 @@ public class SolarisCentralProcessor extends AbstractCentralProcessor {
         return swtch > 0 ? swtch : -1L;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long getInterrupts() {
+    public long queryInterrupts() {
         long intr = 0;
         List<String> kstat = ExecutingCommand.runNative("kstat -p cpu_stat:::/intr/");
         for (String s : kstat) {

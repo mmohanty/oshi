@@ -1,43 +1,89 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware.platform.unix.solaris;
 
+import static oshi.util.Memoizer.memoize;
+
+import java.util.function.Supplier;
+
+import oshi.annotation.concurrent.Immutable;
+import oshi.hardware.Baseboard;
+import oshi.hardware.Firmware;
 import oshi.hardware.common.AbstractComputerSystem;
+import oshi.util.Constants;
 import oshi.util.ExecutingCommand;
 import oshi.util.ParseUtil;
+import oshi.util.Util;
 
 /**
- * Hardware data obtained from smbios
- *
- * @author widdis [at] gmail [dot] com
+ * Hardware data obtained from smbios.
  */
+@Immutable
 final class SolarisComputerSystem extends AbstractComputerSystem {
 
-    private static final long serialVersionUID = 1L;
+    private final Supplier<SmbiosStrings> smbiosStrings = memoize(SolarisComputerSystem::readSmbios);
 
-    private static final String UNKNOWN = "unknown";
-
-    SolarisComputerSystem() {
-        init();
+    @Override
+    public String getManufacturer() {
+        return smbiosStrings.get().manufacturer;
     }
 
-    private void init() {
+    @Override
+    public String getModel() {
+        return smbiosStrings.get().model;
+    }
+
+    @Override
+    public String getSerialNumber() {
+        return smbiosStrings.get().serialNumber;
+    }
+
+    @Override
+    public Firmware createFirmware() {
+        return new SolarisFirmware(smbiosStrings.get().biosVendor, smbiosStrings.get().biosVersion,
+                smbiosStrings.get().biosDate);
+    }
+
+    @Override
+    public Baseboard createBaseboard() {
+        return new SolarisBaseboard(smbiosStrings.get().boardManufacturer, smbiosStrings.get().boardModel,
+                smbiosStrings.get().boardSerialNumber, smbiosStrings.get().boardVersion);
+    }
+
+    private static SmbiosStrings readSmbios() {
+        String biosVendor = null;
+        String biosVersion = null;
+        String biosDate = null;
+
+        String manufacturer = null;
+        String model = null;
+        String serialNumber = null;
+
+        String boardManufacturer = null;
+        String boardModel = null;
+        String boardVersion = null;
+        String boardSerialNumber = null;
 
         // $ smbios
         // ID SIZE TYPE
@@ -75,126 +121,81 @@ final class SolarisComputerSystem extends AbstractComputerSystem {
         // ID SIZE TYPE
         // 3 .... <snip> ...
 
-        String vendor = "";
         final String vendorMarker = "Vendor:";
-        String biosDate = "";
         final String biosDateMarker = "Release Date:";
-        String biosVersion = "";
         final String biosVersionMarker = "VersionString:";
 
-        String manufacturer = "";
-        String boardManufacturer = "";
         final String manufacturerMarker = "Manufacturer:";
-        String product = "";
-        String model = "";
         final String productMarker = "Product:";
-        String version = "";
-        final String versionMarker = "Version:";
-        String serialNumber = "";
-        String boardSerialNumber = "";
         final String serialNumMarker = "Serial Number:";
+        final String versionMarker = "Version:";
 
-        SolarisFirmware firmware = new SolarisFirmware();
-        SolarisBaseboard baseboard = new SolarisBaseboard();
-
-        boolean smbTypeBIOS = false;
-        boolean smbTypeSystem = false;
-        boolean smbTypeBaseboard = false;
+        int smbTypeId = -1;
         // Only works with root permissions but it's all we've got
         for (final String checkLine : ExecutingCommand.runNative("smbios")) {
-            // First 3 SMB_TYPE_* options are what we need. After that we quit
-            if (checkLine.contains("SMB_TYPE_")) {
-                if (checkLine.contains("SMB_TYPE_BIOS")) {
-                    smbTypeBIOS = true;
-                    smbTypeSystem = false;
-                    smbTypeBaseboard = false;
-                } else if (checkLine.contains("SMB_TYPE_SYSTEM")) {
-                    smbTypeBIOS = false;
-                    smbTypeSystem = true;
-                    smbTypeBaseboard = false;
-                } else if (checkLine.contains("SMB_TYPE_BASEBOARD")) {
-                    smbTypeBIOS = false;
-                    smbTypeSystem = false;
-                    smbTypeBaseboard = true;
-                } else {
-                    break;
-                }
+            // Change the smbTypeId when hitting a new header
+            if (checkLine.contains("SMB_TYPE_") && (smbTypeId = getSmbType(checkLine)) == Integer.MAX_VALUE) {
+                // If we get past what we need, stop iterating
+                break;
             }
-
-            if (smbTypeBIOS) {
+            // Based on the smbTypeID we are processing for
+            switch (smbTypeId) {
+            case 0: // BIOS
                 if (checkLine.contains(vendorMarker)) {
-                    vendor = checkLine.split(vendorMarker)[1].trim();
+                    biosVendor = checkLine.split(vendorMarker)[1].trim();
                 } else if (checkLine.contains(biosVersionMarker)) {
                     biosVersion = checkLine.split(biosVersionMarker)[1].trim();
                 } else if (checkLine.contains(biosDateMarker)) {
                     biosDate = checkLine.split(biosDateMarker)[1].trim();
                 }
-            } else if (smbTypeSystem) {
+                break;
+            case 1: // SYSTEM
                 if (checkLine.contains(manufacturerMarker)) {
                     manufacturer = checkLine.split(manufacturerMarker)[1].trim();
                 } else if (checkLine.contains(productMarker)) {
-                    product = checkLine.split(productMarker)[1].trim();
+                    model = checkLine.split(productMarker)[1].trim();
                 } else if (checkLine.contains(serialNumMarker)) {
                     serialNumber = checkLine.split(serialNumMarker)[1].trim();
                 }
-            } else if (smbTypeBaseboard) {
+                break;
+            case 2: // BASEBOARD
                 if (checkLine.contains(manufacturerMarker)) {
                     boardManufacturer = checkLine.split(manufacturerMarker)[1].trim();
                 } else if (checkLine.contains(productMarker)) {
-                    model = checkLine.split(productMarker)[1].trim();
+                    boardModel = checkLine.split(productMarker)[1].trim();
                 } else if (checkLine.contains(versionMarker)) {
-                    version = checkLine.split(versionMarker)[1].trim();
+                    boardVersion = checkLine.split(versionMarker)[1].trim();
                 } else if (checkLine.contains(serialNumMarker)) {
                     boardSerialNumber = checkLine.split(serialNumMarker)[1].trim();
                 }
+                break;
+            default:
+                break;
             }
         }
-
-        if (!vendor.isEmpty()) {
-            firmware.setManufacturer(vendor);
+        // If we get to end and haven't assigned, use fallback
+        if (Util.isBlank(serialNumber)) {
+            serialNumber = readSerialNumber();
         }
-        if (!biosVersion.isEmpty()) {
-            firmware.setVersion(biosVersion);
-        }
-        if (!biosDate.isEmpty()) {
-            try {
-                // Date is MM-DD-YYYY, convert to YYYY-MM-DD
-                firmware.setReleaseDate(String.format("%s-%s-%s", biosDate.substring(6, 10), biosDate.substring(0, 2),
-                        biosDate.substring(3, 5)));
-            } catch (StringIndexOutOfBoundsException e) {
-                firmware.setReleaseDate(biosDate);
-            }
-        }
-
-        if (!manufacturer.isEmpty()) {
-            setManufacturer(manufacturer);
-        }
-        if (!product.isEmpty()) {
-            setModel(product);
-        }
-        if (serialNumber.isEmpty()) {
-            serialNumber = getSystemSerialNumber();
-        }
-        setSerialNumber(serialNumber);
-
-        if (!boardManufacturer.isEmpty()) {
-            baseboard.setManufacturer(boardManufacturer);
-        }
-        if (!model.isEmpty()) {
-            baseboard.setModel(model);
-        }
-        if (!version.isEmpty()) {
-            baseboard.setVersion(version);
-        }
-        if (!boardSerialNumber.isEmpty()) {
-            baseboard.setSerialNumber(boardSerialNumber);
-        }
-
-        setFirmware(firmware);
-        setBaseboard(baseboard);
+        return new SmbiosStrings(biosVendor, biosVersion, biosDate, manufacturer, model, serialNumber,
+                boardManufacturer, boardModel, boardVersion, boardSerialNumber);
     }
 
-    private String getSystemSerialNumber() {
+    private static int getSmbType(String checkLine) {
+        if (checkLine.contains("SMB_TYPE_BIOS")) {
+            return 0; // BIOS
+        } else if (checkLine.contains("SMB_TYPE_SYSTEM")) {
+            return 1; // SYSTEM
+        } else if (checkLine.contains("SMB_TYPE_BASEBOARD")) {
+            return 2; // BASEBOARD
+        } else {
+            // First 3 SMB_TYPEs are what we need. After that no need to
+            // continue processing the output
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    private static String readSerialNumber() {
         // If they've installed STB (Sun Explorer) this should work
         String serialNumber = ExecutingCommand.getFirstAnswer("sneep");
         // if that didn't work, try...
@@ -207,9 +208,38 @@ final class SolarisComputerSystem extends AbstractComputerSystem {
                 }
             }
         }
-        if (serialNumber.isEmpty()) {
-            serialNumber = UNKNOWN;
-        }
         return serialNumber;
+    }
+
+    private static final class SmbiosStrings {
+        private final String biosVendor;
+        private final String biosVersion;
+        private final String biosDate;
+
+        private final String manufacturer;
+        private final String model;
+        private final String serialNumber;
+
+        private final String boardManufacturer;
+        private final String boardModel;
+        private final String boardVersion;
+        private final String boardSerialNumber;
+
+        private SmbiosStrings(String biosVendor, String biosVersion, String biosDate, //
+                String manufacturer, String model, String serialNumber, //
+                String boardManufacturer, String boardModel, String boardVersion, String boardSerialNumber) {
+            this.biosVendor = Util.isBlank(biosVendor) ? Constants.UNKNOWN : biosVendor;
+            this.biosVersion = Util.isBlank(biosVersion) ? Constants.UNKNOWN : biosVersion;
+            this.biosDate = Util.isBlank(biosDate) ? Constants.UNKNOWN : biosDate;
+
+            this.manufacturer = Util.isBlank(manufacturer) ? Constants.UNKNOWN : manufacturer;
+            this.model = Util.isBlank(model) ? Constants.UNKNOWN : model;
+            this.serialNumber = Util.isBlank(serialNumber) ? Constants.UNKNOWN : serialNumber;
+
+            this.boardManufacturer = Util.isBlank(boardManufacturer) ? Constants.UNKNOWN : boardManufacturer;
+            this.boardModel = Util.isBlank(boardModel) ? Constants.UNKNOWN : boardModel;
+            this.boardVersion = Util.isBlank(boardVersion) ? Constants.UNKNOWN : boardVersion;
+            this.boardSerialNumber = Util.isBlank(boardSerialNumber) ? Constants.UNKNOWN : boardSerialNumber;
+        }
     }
 }

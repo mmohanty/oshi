@@ -1,171 +1,254 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware.platform.linux;
 
-import java.util.HashSet;
+import static oshi.util.platform.linux.ProcPath.CPUINFO;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import oshi.annotation.concurrent.ThreadSafe;
+import oshi.driver.linux.proc.CpuStat;
 import oshi.hardware.common.AbstractCentralProcessor;
-import oshi.jna.platform.linux.Libc;
+import oshi.jna.platform.linux.LinuxLibc;
+import oshi.software.os.linux.LinuxOperatingSystem;
 import oshi.util.ExecutingCommand;
 import oshi.util.FileUtil;
+import oshi.util.GlobalConfig;
 import oshi.util.ParseUtil;
-import oshi.util.platform.linux.ProcUtil;
 
 /**
  * A CPU as defined in Linux /proc.
- *
- * @author alessandro[at]perucchi[dot]org
- * @author alessio.fachechi[at]gmail[dot]com
- * @author widdis[at]gmail[dot]com
  */
-public class LinuxCentralProcessor extends AbstractCentralProcessor {
+@ThreadSafe
+final class LinuxCentralProcessor extends AbstractCentralProcessor {
 
-    private static final long serialVersionUID = 1L;
+    // See https://www.kernel.org/doc/Documentation/cpu-freq/user-guide.txt
+    private static final String CPUFREQ_PATH = "oshi.cpu.freq.path";
 
-    private static final Logger LOG = LoggerFactory.getLogger(LinuxCentralProcessor.class);
+    @Override
+    protected ProcessorIdentifier queryProcessorId() {
+        String cpuVendor = "";
+        String cpuName = "";
+        String cpuFamily = "";
+        String cpuModel = "";
+        String cpuStepping = "";
+        String processorID;
+        boolean cpu64bit = false;
 
-    /**
-     * Create a Processor
-     */
-    public LinuxCentralProcessor() {
-        super();
-        // Initialize class variables
-        initVars();
-        // Initialize tick arrays
-        initTicks();
-
-        LOG.debug("Initialized Processor");
-    }
-
-    private void initVars() {
+        StringBuilder armStepping = new StringBuilder(); // For ARM equivalent
         String[] flags = new String[0];
-        List<String> cpuInfo = FileUtil.readFile("/proc/cpuinfo");
+        List<String> cpuInfo = FileUtil.readFile(CPUINFO);
         for (String line : cpuInfo) {
             String[] splitLine = ParseUtil.whitespacesColonWhitespace.split(line);
             if (splitLine.length < 2) {
-                break;
+                continue;
             }
             switch (splitLine[0]) {
             case "vendor_id":
-                setVendor(splitLine[1]);
+            case "CPU implementer":
+                cpuVendor = splitLine[1];
                 break;
             case "model name":
-                setName(splitLine[1]);
+                cpuName = splitLine[1];
                 break;
             case "flags":
                 flags = splitLine[1].toLowerCase().split(" ");
-                boolean found = false;
                 for (String flag : flags) {
                     if ("lm".equals(flag)) {
-                        found = true;
+                        cpu64bit = true;
                         break;
                     }
                 }
-                setCpu64(found);
                 break;
             case "stepping":
-                setStepping(splitLine[1]);
+                cpuStepping = splitLine[1];
+                break;
+            case "CPU variant":
+                armStepping.insert(0, "r" + splitLine[1]);
+                break;
+            case "CPU revision":
+                armStepping.append('p').append(splitLine[1]);
                 break;
             case "model":
-                setModel(splitLine[1]);
+            case "CPU part":
+                cpuModel = splitLine[1];
                 break;
             case "cpu family":
-                setFamily(splitLine[1]);
+            case "CPU architecture":
+                cpuFamily = splitLine[1];
                 break;
             default:
                 // Do nothing
             }
         }
-        setProcessorID(getProcessorID(getStepping(), getModel(), getFamily(), flags));
+        if (cpuStepping.isEmpty()) {
+            cpuStepping = armStepping.toString();
+        }
+        processorID = getProcessorID(cpuVendor, cpuStepping, cpuModel, cpuFamily, flags);
+        if (cpuVendor.startsWith("0x")) {
+            List<String> lscpu = ExecutingCommand.runNative("lscpu");
+            for (String line : lscpu) {
+                if (line.startsWith("Architecture:")) {
+                    cpuVendor = line.replace("Architecture:", "").trim();
+                }
+            }
+        }
+        return new ProcessorIdentifier(cpuVendor, cpuName, cpuFamily, cpuModel, cpuStepping, processorID, cpu64bit);
     }
 
-    /**
-     * Updates logical and physical processor counts from /proc/cpuinfo
-     */
     @Override
-    protected void calculateProcessorCounts() {
-        int[] uniqueID = new int[2];
-        uniqueID[0] = -1;
-        uniqueID[1] = -1;
-
-        Set<String> processorIDs = new HashSet<>();
-        Set<Integer> packageIDs = new HashSet<>();
-
-        List<String> procCpu = FileUtil.readFile("/proc/cpuinfo");
+    protected List<LogicalProcessor> initProcessorCounts() {
+        Map<Integer, Integer> numaNodeMap = mapNumaNodes();
+        List<String> procCpu = FileUtil.readFile(CPUINFO);
+        List<LogicalProcessor> logProcs = new ArrayList<>();
+        int currentProcessor = 0;
+        int currentCore = 0;
+        int currentPackage = 0;
+        boolean first = true;
         for (String cpu : procCpu) {
             // Count logical processors
             if (cpu.startsWith("processor")) {
-                this.logicalProcessorCount++;
-            }
-            // Count unique combinations of core id and physical id.
-            if (cpu.startsWith("core id") || cpu.startsWith("cpu number")) {
-                uniqueID[0] = ParseUtil.parseLastInt(cpu, 0);
+                if (!first) {
+                    logProcs.add(new LogicalProcessor(currentProcessor, currentCore, currentPackage,
+                            numaNodeMap.getOrDefault(currentProcessor, 0)));
+                } else {
+                    first = false;
+                }
+                currentProcessor = ParseUtil.parseLastInt(cpu, 0);
+            } else if (cpu.startsWith("core id") || cpu.startsWith("cpu number")) {
+                // Count unique combinations of core id and physical id.
+                currentCore = ParseUtil.parseLastInt(cpu, 0);
             } else if (cpu.startsWith("physical id")) {
-                uniqueID[1] = ParseUtil.parseLastInt(cpu, 0);
-            }
-            if (uniqueID[0] >= 0 && uniqueID[1] >= 0) {
-                packageIDs.add(uniqueID[1]);
-                processorIDs.add(uniqueID[0] + " " + uniqueID[1]);
-                uniqueID[0] = -1;
-                uniqueID[1] = -1;
+                currentPackage = ParseUtil.parseLastInt(cpu, 0);
             }
         }
-        // Force at least one processor
-        if (this.logicalProcessorCount < 1) {
-            LOG.error("Couldn't find logical processor count. Assuming 1.");
-            this.logicalProcessorCount = 1;
-        }
-        this.physicalProcessorCount = processorIDs.size();
-        if (this.physicalProcessorCount < 1) {
-            LOG.error("Couldn't find physical processor count. Assuming 1.");
-            this.physicalProcessorCount = 1;
-        }
-        this.physicalPackageCount = packageIDs.size();
-        if (this.physicalPackageCount < 1) {
-            LOG.error("Couldn't find physical package count. Assuming 1.");
-            this.physicalPackageCount = 1;
-        }
+        logProcs.add(new LogicalProcessor(currentProcessor, currentCore, currentPackage,
+                numaNodeMap.getOrDefault(currentProcessor, 0)));
+
+        return logProcs;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    private static Map<Integer, Integer> mapNumaNodes() {
+        Map<Integer, Integer> numaNodeMap = new HashMap<>();
+        // Get numa node info from lscpu
+        List<String> lscpu = ExecutingCommand.runNative("lscpu -p=cpu,node");
+        // Format:
+        // # comment lines starting with #
+        // # then comma-delimited cpu,node
+        // 0,0
+        // 1,0
+        for (String line : lscpu) {
+            if (line.startsWith("#")) {
+                continue;
+            }
+            String[] split = line.split(",");
+            if (split.length == 2) {
+                numaNodeMap.put(ParseUtil.parseIntOrDefault(split[0], 0), ParseUtil.parseIntOrDefault(split[1], 0));
+            }
+        }
+        return numaNodeMap;
+    }
+
     @Override
-    public synchronized long[] getSystemCpuLoadTicks() {
-        return ProcUtil.getSystemCpuLoadTicks();
+    public long[] querySystemCpuLoadTicks() {
+        // convert the Linux Jiffies to Milliseconds.
+        long[] ticks = CpuStat.getSystemCpuLoadTicks();
+        long hz = LinuxOperatingSystem.getHz();
+        for (int i = 0; i < ticks.length; i++) {
+            ticks[i] = ticks[i] * 1000L / hz;
+        }
+        return ticks;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    @Override
+    public long[] queryCurrentFreq() {
+        String cpuFreqPath = GlobalConfig.get(CPUFREQ_PATH, "");
+        long[] freqs = new long[getLogicalProcessorCount()];
+        // Attempt to fill array from cpu-freq source
+        long max = 0L;
+        for (int i = 0; i < freqs.length; i++) {
+            freqs[i] = FileUtil.getLongFromFile(cpuFreqPath + i + "/cpufreq/scaling_cur_freq");
+            if (freqs[i] == 0) {
+                freqs[i] = FileUtil.getLongFromFile(cpuFreqPath + i + "/cpufreq/cpuinfo_cur_freq");
+            }
+            if (max < freqs[i]) {
+                max = freqs[i];
+            }
+        }
+        if (max > 0L) {
+            // If successful, array is filled with values in KHz.
+            for (int i = 0; i < freqs.length; i++) {
+                freqs[i] *= 1000L;
+            }
+            return freqs;
+        }
+        // If unsuccessful, try from /proc/cpuinfo
+        Arrays.fill(freqs, -1);
+        List<String> cpuInfo = FileUtil.readFile(CPUINFO);
+        int proc = 0;
+        for (String s : cpuInfo) {
+            if (s.toLowerCase().contains("cpu mhz")) {
+                freqs[proc] = (long) (ParseUtil.parseLastDouble(s, 0d) * 1_000_000);
+                if (++proc >= freqs.length) {
+                    break;
+                }
+            }
+        }
+        return freqs;
+    }
+
+    @Override
+    public long queryMaxFreq() {
+        String cpuFreqPath = GlobalConfig.get(CPUFREQ_PATH, "");
+        long max = 0L;
+        for (int i = 0; i < getLogicalProcessorCount(); i++) {
+            long freq = FileUtil.getLongFromFile(cpuFreqPath + i + "/cpufreq/scaling_max_freq");
+            if (freq == 0) {
+                freq = FileUtil.getLongFromFile(cpuFreqPath + i + "/cpufreq/cpuinfo_max_freq");
+            }
+            if (max < freq) {
+                max = freq;
+            }
+        }
+        if (max > 0L) {
+            // If successful, value is in KHz.
+            return max * 1000L;
+        }
+        return -1L;
+    }
+
     @Override
     public double[] getSystemLoadAverage(int nelem) {
         if (nelem < 1 || nelem > 3) {
             throw new IllegalArgumentException("Must include from one to three elements.");
         }
         double[] average = new double[nelem];
-        int retval = Libc.INSTANCE.getloadavg(average, nelem);
+        int retval = LinuxLibc.INSTANCE.getloadavg(average, nelem);
         if (retval < nelem) {
             for (int i = Math.max(retval, 0); i < average.length; i++) {
                 average[i] = -1d;
@@ -174,70 +257,37 @@ public class LinuxCentralProcessor extends AbstractCentralProcessor {
         return average;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long[][] getProcessorCpuLoadTicks() {
-        long[][] ticks = new long[this.logicalProcessorCount][TickType.values().length];
-        // /proc/stat expected format
-        // first line is overall user,nice,system,idle, etc.
-        // cpu 3357 0 4313 1362393 ...
-        // per-processor subsequent lines for cpu0, cpu1, etc.
-        int cpu = 0;
-        List<String> procStat = FileUtil.readFile("/proc/stat");
-        for (String stat : procStat) {
-            if (stat.startsWith("cpu") && !stat.startsWith("cpu ")) {
-                // Split the line. Note the first (0) element is "cpu" so
-                // remaining
-                // elements are offset by 1 from the enum index
-                String[] tickArr = ParseUtil.whitespaces.split(stat);
-                if (tickArr.length <= TickType.IDLE.getIndex()) {
-                    // If ticks don't at least go user/nice/system/idle, abort
-                    return ticks;
-                }
-                // Note tickArr is offset by 1
-                for (int i = 0; i < TickType.values().length; i++) {
-                    ticks[cpu][i] = ParseUtil.parseLongOrDefault(tickArr[i + 1], 0L);
-                }
-                // Ignore guest or guest_nice, they are included in
-                if (++cpu >= this.logicalProcessorCount) {
-                    break;
-                }
+    public long[][] queryProcessorCpuLoadTicks() {
+        long[][] ticks = CpuStat.getProcessorCpuLoadTicks(getLogicalProcessorCount());
+        // convert the Linux Jiffies to Milliseconds.
+        long hz = LinuxOperatingSystem.getHz();
+        for (int i = 0; i < ticks.length; i++) {
+            for (int j = 0; j < ticks[i].length; j++) {
+                ticks[i][j] = ticks[i][j] * 1000L / hz;
             }
         }
         return ticks;
     }
 
     /**
-     * {@inheritDoc}
-     */
-    @Override
-    public long getSystemUptime() {
-        return (long) ProcUtil.getSystemUptimeSeconds();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    @Deprecated
-    public String getSystemSerialNumber() {
-        return new LinuxComputerSystem().getSerialNumber();
-    }
-
-    /**
-     * Fetches the ProcessorID from dmidecode (if possible with root
-     * permissions), the cpuid command (if installed) or by encoding the
-     * stepping, model, family, and feature flags.
+     * Fetches the ProcessorID from dmidecode (if possible with root permissions),
+     * the cpuid command (if installed) or by encoding the stepping, model, family,
+     * and feature flags.
      *
+     * @param vendor
+     *            The vendor
      * @param stepping
+     *            The stepping
      * @param model
+     *            The model
      * @param family
+     *            The family
      * @param flags
+     *            The flags
      * @return The Processor ID string
      */
-    private String getProcessorID(String stepping, String model, String family, String[] flags) {
+    private static String getProcessorID(String vendor, String stepping, String model, String family, String[] flags) {
         boolean procInfo = false;
         String marker = "Processor Information";
         for (String checkLine : ExecutingCommand.runNative("dmidecode -t 4")) {
@@ -265,40 +315,52 @@ public class LinuxCentralProcessor extends AbstractCentralProcessor {
             }
         }
         // If we've gotten this far, dmidecode failed. Encode arguments
+        if (vendor.startsWith("0x")) {
+            return createMIDR(vendor, stepping, model, family) + "00000000";
+        }
         return createProcessorID(stepping, model, family, flags);
     }
 
     /**
-     * {@inheritDoc}
+     * Creates the MIDR, the ARM equivalent of CPUID ProcessorID
+     *
+     * @param vendor
+     *            the CPU implementer
+     * @param stepping
+     *            the "rnpn" variant and revision
+     * @param model
+     *            the partnum
+     * @param family
+     *            the architecture
+     * @return A 32-bit hex string for the MIDR
      */
-    @Override
-    public long getContextSwitches() {
-        List<String> procStat = FileUtil.readFile("/proc/stat");
-        for (String stat : procStat) {
-            if (stat.startsWith("ctxt ")) {
-                String[] ctxtArr = ParseUtil.whitespaces.split(stat);
-                if (ctxtArr.length == 2) {
-                    return ParseUtil.parseLongOrDefault(ctxtArr[1], 0);
-                }
-            }
+    private static String createMIDR(String vendor, String stepping, String model, String family) {
+        int midrBytes = 0;
+        // Build 32-bit MIDR
+        if (stepping.startsWith("r") && stepping.contains("p")) {
+            String[] rev = stepping.substring(1).split("p");
+            // 3:0 – Revision: last n in rnpn
+            midrBytes |= ParseUtil.parseLastInt(rev[1], 0);
+            // 23:20 - Variant: first n in rnpn
+            midrBytes |= ParseUtil.parseLastInt(rev[0], 0) << 20;
         }
-        return -1;
+        // 15:4 - PartNum = model
+        midrBytes |= ParseUtil.parseLastInt(model, 0) << 4;
+        // 19:16 - Architecture = family
+        midrBytes |= ParseUtil.parseLastInt(family, 0) << 16;
+        // 31:24 - Implementer = vendor
+        midrBytes |= ParseUtil.parseLastInt(vendor, 0) << 24;
+
+        return String.format("%08X", midrBytes);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public long getInterrupts() {
-        List<String> procStat = FileUtil.readFile("/proc/stat");
-        for (String stat : procStat) {
-            if (stat.startsWith("intr ")) {
-                String[] intrArr = ParseUtil.whitespaces.split(stat);
-                if (intrArr.length > 2) {
-                    return ParseUtil.parseLongOrDefault(intrArr[1], 0);
-                }
-            }
-        }
-        return -1;
+    public long queryContextSwitches() {
+        return CpuStat.getContextSwitches();
+    }
+
+    @Override
+    public long queryInterrupts() {
+        return CpuStat.getInterrupts();
     }
 }

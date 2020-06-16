@@ -1,175 +1,140 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware.platform.linux;
 
+import static oshi.util.Memoizer.defaultExpiration;
+import static oshi.util.Memoizer.memoize;
+
 import java.util.List;
+import java.util.function.Supplier;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.sun.jna.Native; // NOSONAR
-
+import oshi.annotation.concurrent.ThreadSafe;
+import oshi.hardware.VirtualMemory;
 import oshi.hardware.common.AbstractGlobalMemory;
-import oshi.jna.platform.linux.Libc;
-import oshi.jna.platform.linux.Libc.Sysinfo;
+import oshi.util.ExecutingCommand;
 import oshi.util.FileUtil;
 import oshi.util.ParseUtil;
+import oshi.util.platform.linux.ProcPath;
+import oshi.util.tuples.Pair;
 
 /**
  * Memory obtained by /proc/meminfo and sysinfo.totalram
- *
- * @author alessandro[at]perucchi[dot]org
- * @author widdis[at]gmail[dot]com
  */
-public class LinuxGlobalMemory extends AbstractGlobalMemory {
+@ThreadSafe
+final class LinuxGlobalMemory extends AbstractGlobalMemory {
 
-    private static final long serialVersionUID = 1L;
+    private final Supplier<Pair<Long, Long>> availTotal = memoize(LinuxGlobalMemory::readMemInfo, defaultExpiration());
 
-    private static final Logger LOG = LoggerFactory.getLogger(LinuxGlobalMemory.class);
+    private final Supplier<Long> pageSize = memoize(LinuxGlobalMemory::queryPageSize);
 
-    // Values read from /proc/meminfo used for other calculations
-    private long memFree = 0;
-    private long activeFile = 0;
-    private long inactiveFile = 0;
-    private long sReclaimable = 0;
-    private long swapFree = 0;
+    private final Supplier<VirtualMemory> vm = memoize(this::createVirtualMemory);
 
-    private long lastUpdate = 0;
+    @Override
+    public long getAvailable() {
+        return availTotal.get().getA();
+    }
 
-    public LinuxGlobalMemory() {
-        try {
-            Sysinfo info = new Sysinfo();
-            if (0 == Libc.INSTANCE.sysinfo(info)) {
-                this.pageSize = info.mem_unit;
-            } else {
-                LOG.error("Failed to get sysinfo. Error code: {}", Native.getLastError());
-            }
-        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
-            LOG.error("Failed to get mem_unit from sysinfo. {}", e);
-        }
+    @Override
+    public long getTotal() {
+        return availTotal.get().getB();
+    }
+
+    @Override
+    public long getPageSize() {
+        return pageSize.get();
+    }
+
+    @Override
+    public VirtualMemory getVirtualMemory() {
+        return vm.get();
+    }
+
+    private static long queryPageSize() {
+        // Ideally we would us sysconf(_SC_PAGESIZE) but the constant is platform
+        // dependent and would require parsing header files, etc. Since this is only
+        // read once at startup, command line is a reliable fallback.
+        return ParseUtil.parseLongOrDefault(ExecutingCommand.getFirstAnswer("getconf PAGE_SIZE"), 4096L);
     }
 
     /**
-     * Updates instance variables from reading /proc/meminfo no more frequently
-     * than every 100ms. While most of the information is available in the
-     * sysinfo structure, the most accurate calculation of MemAvailable is only
-     * available from reading this pseudo-file. The maintainers of the Linux
-     * Kernel have indicated this location will be kept up to date if the
-     * calculation changes: see
+     * Updates instance variables from reading /proc/meminfo. While most of the
+     * information is available in the sysinfo structure, the most accurate
+     * calculation of MemAvailable is only available from reading this pseudo-file.
+     * The maintainers of the Linux Kernel have indicated this location will be kept
+     * up to date if the calculation changes: see
      * https://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?
      * id=34e431b0ae398fc54ea69ff85ec700722c9da773
-     *
+     * <p>
      * Internally, reading /proc/meminfo is faster than sysinfo because it only
      * spends time populating the memory components of the sysinfo structure.
-     */
-    @Override
-    protected void updateMeminfo() {
-        long now = System.currentTimeMillis();
-        if (now - this.lastUpdate > 100) {
-            List<String> memInfo = FileUtil.readFile("/proc/meminfo");
-            boolean found = false;
-            for (String checkLine : memInfo) {
-                String[] memorySplit = ParseUtil.whitespaces.split(checkLine);
-                if (memorySplit.length > 1) {
-                    switch (memorySplit[0]) {
-                    case "MemTotal:":
-                        this.memTotal = parseMeminfo(memorySplit);
-                        break;
-                    case "MemFree:":
-                        this.memFree = parseMeminfo(memorySplit);
-                        break;
-                    case "MemAvailable:":
-                        this.memAvailable = parseMeminfo(memorySplit);
-                        found = true;
-                        break;
-                    case "Active(file):":
-                        this.activeFile = parseMeminfo(memorySplit);
-                        break;
-                    case "Inactive(file):":
-                        this.inactiveFile = parseMeminfo(memorySplit);
-                        break;
-                    case "SReclaimable:":
-                        this.sReclaimable = parseMeminfo(memorySplit);
-                        break;
-                    case "SwapTotal:":
-                        this.swapTotal = parseMeminfo(memorySplit);
-                        break;
-                    case "SwapFree:":
-                        this.swapFree = parseMeminfo(memorySplit);
-                        break;
-                    default:
-                        // do nothing with other lines
-                        break;
-                    }
-                }
-            }
-            this.swapUsed = this.swapTotal - this.swapFree;
-            // If no MemAvailable, calculate from other fields
-            if (!found) {
-                this.memAvailable = this.memFree + this.activeFile + this.inactiveFile + this.sReclaimable;
-            }
-
-            memInfo = FileUtil.readFile("/proc/vmstat");
-            for (String checkLine : memInfo) {
-                String[] memorySplit = ParseUtil.whitespaces.split(checkLine);
-                if (memorySplit.length > 1) {
-                    switch (memorySplit[0]) {
-                    case "pgpgin":
-                        swapPagesIn = ParseUtil.parseLongOrDefault(memorySplit[1], 0L);
-                        break;
-                    case "pgpgout":
-                        swapPagesOut = ParseUtil.parseLongOrDefault(memorySplit[1], 0L);
-                        break;
-                    default:
-                        // do nothing with other lines
-                        break;
-                    }
-                }
-            }
-
-            this.lastUpdate = now;
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    protected void updateSwap() {
-        updateMeminfo();
-    }
-
-    /**
-     * Parses lines from the display of /proc/meminfo
      *
-     * @param memorySplit
-     *            Array of Strings representing the 3 columns of /proc/meminfo
-     * @return value, multiplied by 1024 if kB is specified
+     * @return A pair containing available and total memory in bytes
      */
-    private long parseMeminfo(String[] memorySplit) {
-        if (memorySplit.length < 2) {
-            return 0l;
+    private static Pair<Long, Long> readMemInfo() {
+        long memFree = 0L;
+        long activeFile = 0L;
+        long inactiveFile = 0L;
+        long sReclaimable = 0L;
+
+        long memTotal = 0L;
+        long memAvailable;
+
+        List<String> procMemInfo = FileUtil.readFile(ProcPath.MEMINFO);
+        for (String checkLine : procMemInfo) {
+            String[] memorySplit = ParseUtil.whitespaces.split(checkLine, 2);
+            if (memorySplit.length > 1) {
+                switch (memorySplit[0]) {
+                case "MemTotal:":
+                    memTotal = ParseUtil.parseDecimalMemorySizeToBinary(memorySplit[1]);
+                    break;
+                case "MemAvailable:":
+                    memAvailable = ParseUtil.parseDecimalMemorySizeToBinary(memorySplit[1]);
+                    // We're done!
+                    return new Pair<>(memAvailable, memTotal);
+                case "MemFree:":
+                    memFree = ParseUtil.parseDecimalMemorySizeToBinary(memorySplit[1]);
+                    break;
+                case "Active(file):":
+                    activeFile = ParseUtil.parseDecimalMemorySizeToBinary(memorySplit[1]);
+                    break;
+                case "Inactive(file):":
+                    inactiveFile = ParseUtil.parseDecimalMemorySizeToBinary(memorySplit[1]);
+                    break;
+                case "SReclaimable:":
+                    sReclaimable = ParseUtil.parseDecimalMemorySizeToBinary(memorySplit[1]);
+                    break;
+                default:
+                    // do nothing with other lines
+                    break;
+                }
+            }
         }
-        long memory = ParseUtil.parseLongOrDefault(memorySplit[1], 0L);
-        if (memorySplit.length > 2 && "kB".equals(memorySplit[2])) {
-            memory *= 1024;
-        }
-        return memory;
+        // We didn't find MemAvailable so we estimate from other fields
+        return new Pair<>(memFree + activeFile + inactiveFile + sReclaimable, memTotal);
+    }
+
+    private VirtualMemory createVirtualMemory() {
+        return new LinuxVirtualMemory(this);
     }
 }

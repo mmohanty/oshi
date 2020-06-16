@@ -1,20 +1,25 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware;
 
@@ -37,19 +42,13 @@ public class GlobalMemoryTest {
         SystemInfo si = new SystemInfo();
         HardwareAbstractionLayer hal = si.getHardware();
         GlobalMemory memory = hal.getMemory();
-        assertNotNull(memory);
+        assertNotNull("Memory shouldn't be null", memory);
 
-        // RAM tests
-        assertTrue(memory.getTotal() > 0);
-        assertTrue(memory.getAvailable() >= 0);
-        assertTrue(memory.getAvailable() <= memory.getTotal());
-        assertTrue(memory.getPageSize() > 0);
-
-        // Swap tests
-        assertTrue(memory.getSwapPagesIn() >= 0);
-        assertTrue(memory.getSwapPagesOut() >= 0);
-        assertTrue(memory.getSwapTotal() >= 0);
-        assertTrue(memory.getSwapUsed() >= 0);
-        assertTrue(memory.getSwapUsed() <= memory.getSwapTotal());
+        assertTrue("Total memory should be greater than zero", memory.getTotal() > 0);
+        assertTrue("Available memory should be greater than or equal to zero", memory.getAvailable() >= 0);
+        assertTrue("Available memory should be less than or equal to total memory",
+                memory.getAvailable() <= memory.getTotal());
+        assertTrue("Memory page size should be greater than zero", memory.getPageSize() > 0);
+        assertTrue("Memory should contain the substring \"Available\"", memory.toString().contains("Available"));
     }
 }

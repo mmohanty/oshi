@@ -1,43 +1,63 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.util;
 
 import java.math.BigInteger;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import oshi.annotation.concurrent.ThreadSafe;
+import oshi.util.tuples.Pair;
+
 /**
  * String parsing utility.
- *
- * @author alessio.fachechi[at]gmail[dot]com
  */
-public class ParseUtil {
+@ThreadSafe
+public final class ParseUtil {
 
     private static final Logger LOG = LoggerFactory.getLogger(ParseUtil.class);
 
     private static final String DEFAULT_LOG_MSG = "{} didn't parse. Returning default. {}";
+
     /*
      * Used for matching
      */
@@ -49,15 +69,31 @@ public class ParseUtil {
     private static final Pattern VALID_HEX = Pattern.compile("[0-9a-fA-F]+");
 
     /*
-     * Pattern for [dd-[hh:[mm:ss]]]
+     * Pattern for [dd-[hh:[mm:[ss[.sss]]]]]
      */
-    private static final Pattern DHMS = Pattern.compile("(?:(\\d+)-)?(?:(\\d+):)?(\\d+):(\\d+)(?:\\.(\\d+))?");
+    private static final Pattern DHMS = Pattern.compile("(?:(\\d+)-)?(?:(\\d+):)??(?:(\\d+):)?(\\d+)(?:\\.(\\d+))?");
 
     /*
      * Pattern for a UUID
      */
     private static final Pattern UUID_PATTERN = Pattern
             .compile(".*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}).*");
+
+    /*
+     * Pattern for Windows PnPDeviceID vendor and product ID
+     */
+    private static final Pattern VENDOR_PRODUCT_ID = Pattern
+            .compile(".*(?:VID|VEN)_(\\p{XDigit}{4})&(?:PID|DEV)_(\\p{XDigit}{4}).*");
+
+    /*
+     * Pattern for Linux lspci machine readable
+     */
+    private static final Pattern LSPCI_MACHINE_READABLE = Pattern.compile("(.+)\\s\\[(.*?)\\]");
+
+    /*
+     * Pattern for Linux lspci memory
+     */
+    private static final Pattern LSPCI_MEMORY_SIZE = Pattern.compile(".+\\s\\[size=(\\d+)([kKMGT])\\]");
 
     /*
      * Hertz related variables.
@@ -71,12 +107,21 @@ public class ParseUtil {
 
     private static final Map<String, Long> multipliers;
 
+    // PDH timestamps are 1601 epoch, local time
+    // Constants to convert to UTC millis
+    private static final long EPOCH_DIFF = 11_644_473_600_000L;
+    private static final int TZ_OFFSET = TimeZone.getDefault().getOffset(System.currentTimeMillis());
+
+    /** Constant <code>whitespacesColonWhitespace</code> */
     public static final Pattern whitespacesColonWhitespace = Pattern.compile("\\s+:\\s");
 
+    /** Constant <code>whitespaces</code> */
     public static final Pattern whitespaces = Pattern.compile("\\s+");
 
+    /** Constant <code>notDigits</code> */
     public static final Pattern notDigits = Pattern.compile("[^0-9]+");
 
+    /** Constant <code>startWithNotDigits</code> */
     public static final Pattern startWithNotDigits = Pattern.compile("^[^0-9]*");
 
     static {
@@ -98,21 +143,25 @@ public class ParseUtil {
     // Fast hex character lookup
     private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
 
+    // Format returned by WMI for DateTime
+    private static final DateTimeFormatter CIM_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss.SSSSSSZZZZZ",
+            Locale.US);
+
     private ParseUtil() {
     }
 
     /**
-     * Parse hertz from a string, eg. "2.00MHz" in 2000000L.
+     * Parse hertz from a string, eg. "2.00MHz" is 2000000L.
      *
      * @param hertz
      *            Hertz size.
-     * @return {@link Long} Hertz value or -1 if not parsable.
+     * @return {@link java.lang.Long} Hertz value or -1 if not parseable.
      */
     public static long parseHertz(String hertz) {
         Matcher matcher = HERTZ_PATTERN.matcher(hertz.trim());
         if (matcher.find() && matcher.groupCount() == 3) {
             // Regexp enforces #(.#) format so no test for NFE required
-            double value = Double.valueOf(matcher.group(1)) * MapUtil.getOrDefault(multipliers, matcher.group(3), -1L);
+            double value = Double.valueOf(matcher.group(1)) * multipliers.getOrDefault(matcher.group(3), -1L);
             if (value >= 0d) {
                 return (long) value;
             }
@@ -131,7 +180,12 @@ public class ParseUtil {
      */
     public static int parseLastInt(String s, int i) {
         try {
-            return Integer.parseInt(parseLastString(s));
+            String ls = parseLastString(s);
+            if (ls.toLowerCase().startsWith("0x")) {
+                return Integer.decode(ls);
+            } else {
+                return Integer.parseInt(ls);
+            }
         } catch (NumberFormatException e) {
             LOG.trace(DEFAULT_LOG_MSG, s, e);
             return i;
@@ -149,10 +203,33 @@ public class ParseUtil {
      */
     public static long parseLastLong(String s, long li) {
         try {
-            return Long.parseLong(parseLastString(s));
+            String ls = parseLastString(s);
+            if (ls.toLowerCase().startsWith("0x")) {
+                return Long.decode(ls);
+            } else {
+                return Long.parseLong(ls);
+            }
         } catch (NumberFormatException e) {
             LOG.trace(DEFAULT_LOG_MSG, s, e);
             return li;
+        }
+    }
+
+    /**
+     * Parse the last element of a space-delimited string to a value
+     *
+     * @param s
+     *            The string to parse
+     * @param d
+     *            Default double if not parsable
+     * @return value or the given default if not parsable
+     */
+    public static double parseLastDouble(String s, double d) {
+        try {
+            return Double.parseDouble(parseLastString(s));
+        } catch (NumberFormatException e) {
+            LOG.trace(DEFAULT_LOG_MSG, s, e);
+            return d;
         }
     }
 
@@ -173,13 +250,12 @@ public class ParseUtil {
     }
 
     /**
-     * Parse a byte aray into a string of hexadecimal digits including leading
-     * zeros
+     * Parse a byte aray into a string of hexadecimal digits including leading zeros
      *
      * @param bytes
      *            The byte array to represent
-     * @return A string of hex characters corresponding to the bytes. The string
-     *         is upper case.
+     * @return A string of hex characters corresponding to the bytes. The string is
+     *         upper case.
      */
     public static String byteArrayToHexString(byte[] bytes) {
         // Solution copied from https://stackoverflow.com/questions/9655181
@@ -216,7 +292,7 @@ public class ParseUtil {
     }
 
     /**
-     * Parse a human readable string into a byte array, truncating or padding
+     * Parse a human readable ASCII string into a byte array, truncating or padding
      * with zeros (if necessary) so the array has the specified length.
      *
      * @param text
@@ -224,16 +300,16 @@ public class ParseUtil {
      * @param length
      *            Length of the returned array.
      * @return A byte array of specified length, with each of the first length
-     *         characters converted to a byte. If length is longer than the
-     *         provided string length, will be filled with zeroes.
+     *         characters converted to a byte. If length is longer than the provided
+     *         string length, will be filled with zeroes.
      */
-    public static byte[] stringToByteArray(String text, int length) {
-        return Arrays.copyOf(text.getBytes(), length);
+    public static byte[] asciiStringToByteArray(String text, int length) {
+        return Arrays.copyOf(text.getBytes(StandardCharsets.US_ASCII), length);
     }
 
     /**
-     * Convert a long value to a byte array using Big Endian, truncating or
-     * padding with zeros (if necessary) so the array has the specified length.
+     * Convert a long value to a byte array using Big Endian, truncating or padding
+     * with zeros (if necessary) so the array has the specified length.
      *
      * @param value
      *            The value to be converted
@@ -241,8 +317,8 @@ public class ParseUtil {
      *            Number of bytes representing the value
      * @param length
      *            Number of bytes to return
-     * @return A byte array of specified length representing the long in the
-     *         first valueSize bytes
+     * @return A byte array of specified length representing the long in the first
+     *         valueSize bytes
      */
     public static byte[] longToByteArray(long value, int valueSize, int length) {
         long val = value;
@@ -261,14 +337,14 @@ public class ParseUtil {
      * Convert a string to an integer representation.
      *
      * @param str
-     *            A human readable string
+     *            A human readable ASCII string
      * @param size
      *            Number of characters to convert to the long. May not exceed 8.
-     * @return An integer representing the string where each character is
-     *         treated as a byte
+     * @return An integer representing the string where each character is treated as
+     *         a byte
      */
     public static long strToLong(String str, int size) {
-        return byteArrayToLong(str.getBytes(), size);
+        return byteArrayToLong(str.getBytes(StandardCharsets.US_ASCII), size);
     }
 
     /**
@@ -304,20 +380,20 @@ public class ParseUtil {
      * @param fpBits
      *            Number of bits representing the decimal
      * @return A float; the integer portion representing the byte array as an
-     *         integer shifted by the bits specified in fpBits; with the
-     *         remaining bits used as a decimal
+     *         integer shifted by the bits specified in fpBits; with the remaining
+     *         bits used as a decimal
      */
     public static float byteArrayToFloat(byte[] bytes, int size, int fpBits) {
         return byteArrayToLong(bytes, size) / (float) (1 << fpBits);
     }
 
     /**
-     * Convert an unsigned integer to a long value. The method assumes that all
-     * bits in the specified integer value are 'data' bits, including the
+     * Convert an unsigned integer to a long value. The method assumes that all bits
+     * in the specified integer value are 'data' bits, including the
      * most-significant bit which Java normally considers a sign bit. The method
      * must be used only when it is certain that the integer value represents an
-     * unsigned integer, for example when the integer is returned by JNA library
-     * in a structure which holds unsigned integers.
+     * unsigned integer, for example when the integer is returned by JNA library in
+     * a structure which holds unsigned integers.
      *
      * @param unsignedValue
      *            The unsigned integer value to convert.
@@ -328,8 +404,21 @@ public class ParseUtil {
         // sign-extension,
         // then drop any copies of the sign bit, to prevent the value being
         // considered a negative one by Java if it is set
-        long longValue = (long) unsignedValue;
-        return longValue & 0xffffffffL;
+        long longValue = unsignedValue;
+        return longValue & 0xffff_ffffL;
+    }
+
+    /**
+     * Convert an unsigned long to a signed long value by stripping the sign bit.
+     * This method "rolls over" long values greater than the max value but ensures
+     * the result is never negative.
+     *
+     * @param unsignedValue
+     *            The unsigned long value to convert.
+     * @return The signed long value.
+     */
+    public static long unsignedLongToSignedLong(long unsignedValue) {
+        return unsignedValue & 0x7fff_ffff_ffff_ffffL;
     }
 
     /**
@@ -401,8 +490,8 @@ public class ParseUtil {
     }
 
     /**
-     * Attempts to parse a string to an "unsigned" long. If it fails, returns
-     * the default
+     * Attempts to parse a string to an "unsigned" long. If it fails, returns the
+     * default
      *
      * @param s
      *            The string to parse
@@ -413,7 +502,7 @@ public class ParseUtil {
      */
     public static long parseUnsignedLongOrDefault(String s, long defaultLong) {
         try {
-            return (new BigInteger(s)).longValue();
+            return new BigInteger(s).longValue();
         } catch (NumberFormatException e) {
             LOG.trace(DEFAULT_LOG_MSG, s, e);
             return defaultLong;
@@ -439,8 +528,8 @@ public class ParseUtil {
     }
 
     /**
-     * Attempts to parse a string of the form [DD-[hh:]]mm:ss[.ddd] to a number
-     * of milliseconds. If it fails, returns the default.
+     * Attempts to parse a string of the form [DD-[hh:]]mm:ss[.ddd] to a number of
+     * milliseconds. If it fails, returns the default.
      *
      * @param s
      *            The string to parse
@@ -453,12 +542,14 @@ public class ParseUtil {
         if (m.matches()) {
             long milliseconds = 0L;
             if (m.group(1) != null) {
-                milliseconds += parseLongOrDefault(m.group(1), 0L) * 86400000L;
+                milliseconds += parseLongOrDefault(m.group(1), 0L) * 86_400_000L;
             }
             if (m.group(2) != null) {
-                milliseconds += parseLongOrDefault(m.group(2), 0L) * 3600000L;
+                milliseconds += parseLongOrDefault(m.group(2), 0L) * 3_600_000L;
             }
-            milliseconds += parseLongOrDefault(m.group(3), 0L) * 60000L;
+            if (m.group(3) != null) {
+                milliseconds += parseLongOrDefault(m.group(3), 0L) * 60_000L;
+            }
             milliseconds += parseLongOrDefault(m.group(4), 0L) * 1000L;
             milliseconds += (long) (1000 * parseDoubleOrDefault("0." + m.group(5), 0d));
             return milliseconds;
@@ -491,11 +582,41 @@ public class ParseUtil {
      * @return the value contained between single tick marks
      */
     public static String getSingleQuoteStringValue(String line) {
-        String[] split = line.split("'");
-        if (split.length < 2) {
+        return getStringBetween(line, '\'');
+    }
+
+    /**
+     * Parse a string key = "value" (string)
+     *
+     * @param line
+     *            the entire string
+     * @return the value contained between double tick marks
+     */
+    public static String getDoubleQuoteStringValue(String line) {
+        return getStringBetween(line, '"');
+    }
+
+    /**
+     * Gets a value between two characters having multiple same characters between
+     * them. <b>Examples : </b>
+     * <ul>
+     * <li>"name = 'James Gosling's Java'" returns "James Gosling's Java"</li>
+     * <li>"pci.name = 'Realtek AC'97 Audio Device'" returns "Realtek AC'97 Audio
+     * Device"</li>
+     * </ul>
+     *
+     * @param line
+     *            The "key-value" pair line.
+     * @param c
+     *            The Trailing And Leading characters of the string line
+     * @return : The value having the characters between them.
+     */
+    public static String getStringBetween(String line, char c) {
+        int firstOcc = line.indexOf(c);
+        if (firstOcc < 0) {
             return "";
         }
-        return split[1];
+        return line.substring(firstOcc + 1, line.lastIndexOf(c)).trim();
     }
 
     /**
@@ -530,9 +651,8 @@ public class ParseUtil {
     }
 
     /**
-     * Removes all matching sub strings from the string. More efficient than
-     * regexp.
-     * 
+     * Removes all matching sub strings from the string. More efficient than regexp.
+     *
      * @param original
      *            source String to remove from
      * @param toRemove
@@ -540,12 +660,14 @@ public class ParseUtil {
      * @return The string with all matching substrings removed
      */
     public static String removeMatchingString(final String original, final String toRemove) {
-        if (original == null || original.isEmpty() || toRemove == null || toRemove.isEmpty())
+        if (original == null || original.isEmpty() || toRemove == null || toRemove.isEmpty()) {
             return original;
+        }
 
         int matchIndex = original.indexOf(toRemove, 0);
-        if (matchIndex == -1)
+        if (matchIndex == -1) {
             return original;
+        }
 
         StringBuilder buffer = new StringBuilder(original.length() - toRemove.length());
         int currIndex = 0;
@@ -561,69 +683,88 @@ public class ParseUtil {
 
     /**
      * Parses a delimited string to an array of longs. Optimized for processing
-     * predictable-length arrays such as outputs of reliably formatted Linux
-     * proc or sys filesystem, minimizing new object creation. Users should
-     * perform other sanity checks of data.
-     * 
-     * The indices parameters are referenced assuming the length as specified,
-     * and leading characters are ignored. For example, if the string is "foo 12
-     * 34 5" and the length is 3, then index 0 is 12, index 1 is 34, and index 2
-     * is 5.
-     * 
+     * predictable-length arrays such as outputs of reliably formatted Linux proc or
+     * sys filesystem, minimizing new object creation. Users should perform other
+     * sanity checks of data.
+     *
+     * As a special case, non-numeric fields (such as UUIDs in OpenVZ) at the end of
+     * the list are ignored. Values greater than the max long value return the max
+     * long value.
+     *
+     * The indices parameters are referenced assuming the length as specified, and
+     * leading characters are ignored. For example, if the string is "foo 12 34 5"
+     * and the length is 3, then index 0 is 12, index 1 is 34, and index 2 is 5.
+     *
      * @param s
      *            The string to parse
      * @param indices
-     *            An array indicating which indexes should be populated in the
-     *            final array; other values will be skipped. This idex is
-     *            zero-referenced assuming the rightmost delimited fields of the
-     *            string contain the array.
+     *            An array indicating which indexes should be populated in the final
+     *            array; other values will be skipped. This idex is zero-referenced
+     *            assuming the rightmost delimited fields of the string contain the
+     *            array.
      * @param length
      *            The total number of elements in the string array. It is
      *            permissible for the string to have more elements than this;
-     *            leading elements will be ignored.
+     *            leading elements will be ignored. This should be calculated once
+     *            per text format by {@link #countStringToLongArray}.
      * @param delimiter
-     *            The character to delimit by
-     * @return If successful, an array of parsed longs. If parsing errors
-     *         occurred, will be an array of zeros.
+     *            The character to delimit by.
+     * @return If successful, an array of parsed longs. If parsing errors occurred,
+     *         will be an array of zeros.
      */
     public static long[] parseStringToLongArray(String s, int[] indices, int length, char delimiter) {
         long[] parsed = new long[indices.length];
         // Iterate from right-to-left of String
         // Fill right to left of result array using index array
-        int charIndex = s.length() - 1;
+        int charIndex = s.length();
         int parsedIndex = indices.length - 1;
         int stringIndex = length - 1;
 
         int power = 0;
         int c;
         boolean delimCurrent = false;
-        while (charIndex > 0 && parsedIndex >= 0) {
-            c = s.charAt(charIndex--);
+        boolean numeric = true;
+        boolean numberFound = false; // ignore nonnumeric at end
+        boolean dashSeen = false; // to flag uuids as nonnumeric
+        while (--charIndex > 0 && parsedIndex >= 0) {
+            c = s.charAt(charIndex);
             if (c == delimiter) {
+                // first parseable number?
+                if (!numberFound && numeric) {
+                    numberFound = true;
+                }
                 if (!delimCurrent) {
-                    power = 0;
-                    if (indices[parsedIndex] == stringIndex--) {
+                    if (numberFound && indices[parsedIndex] == stringIndex--) {
                         parsedIndex--;
                     }
                     delimCurrent = true;
+                    power = 0;
+                    dashSeen = false;
+                    numeric = true;
                 }
-            } else if (indices[parsedIndex] != stringIndex || c == '+') {
+            } else if (indices[parsedIndex] != stringIndex || c == '+' || !numeric) {
                 // Doesn't impact parsing, ignore
                 delimCurrent = false;
-            } else if (c >= '0' && c <= '9') {
-                if (power > 18) {
-                    LOG.error("Number is too big for a long parsing string '{}' to long array", s);
-                    return new long[indices.length];
+            } else if (c >= '0' && c <= '9' && !dashSeen) {
+                if (power > 18 || power == 17 && c == '9' && parsed[parsedIndex] > 223_372_036_854_775_807L) {
+                    parsed[parsedIndex] = Long.MAX_VALUE;
+                } else {
+                    parsed[parsedIndex] += (c - '0') * ParseUtil.POWERS_OF_TEN[power++];
                 }
-                parsed[parsedIndex] += (c - '0') * ParseUtil.POWERS_OF_TEN[power++];
                 delimCurrent = false;
             } else if (c == '-') {
                 parsed[parsedIndex] *= -1L;
                 delimCurrent = false;
+                dashSeen = true;
             } else {
+                // Flag as nonnumeric and continue unless we've seen a numeric
                 // error on everything else
-                LOG.error("Illegal character parsing string '{}' to long array: {}", s, s.charAt(charIndex));
-                return new long[indices.length];
+                if (numberFound) {
+                    LOG.error("Illegal character parsing string '{}' to long array: {}", s, s.charAt(charIndex));
+                    return new long[indices.length];
+                }
+                parsed[parsedIndex] = 0;
+                numeric = false;
             }
         }
         if (parsedIndex > 0) {
@@ -631,5 +772,352 @@ public class ParseUtil {
             return new long[indices.length];
         }
         return parsed;
+    }
+
+    /**
+     * Parses a delimited string to count elements of an array of longs. Intended to
+     * be called once to calculate the {@code length} field for
+     * {@link #parseStringToLongArray}.
+     *
+     * As a special case, non-numeric fields (such as UUIDs in OpenVZ) at the end of
+     * the list are ignored.
+     *
+     * @param s
+     *            The string to parse
+     * @param delimiter
+     *            The character to delimit by
+     * @return The number of parsable long values which follow the last unparsable
+     *         value.
+     */
+    public static int countStringToLongArray(String s, char delimiter) {
+        // Iterate from right-to-left of String
+        // Fill right to left of result array using index array
+        int charIndex = s.length();
+        int numbers = 0;
+
+        int c;
+        boolean delimCurrent = false;
+        boolean numeric = true;
+        boolean dashSeen = false; // to flag uuids as nonnumeric
+        while (--charIndex > 0) {
+            c = s.charAt(charIndex);
+            if (c == delimiter) {
+                if (!delimCurrent) {
+                    if (numeric) {
+                        numbers++;
+                    }
+                    delimCurrent = true;
+                    dashSeen = false;
+                    numeric = true;
+                }
+            } else if (c == '+' || !numeric) {
+                // Doesn't impact parsing, ignore
+                delimCurrent = false;
+            } else if (c >= '0' && c <= '9' && !dashSeen) {
+                delimCurrent = false;
+            } else if (c == '-') {
+                delimCurrent = false;
+                dashSeen = true;
+            } else {
+                // we found non-digit or delimiter. If not last field, exit
+                if (numbers > 0) {
+                    return numbers;
+                }
+                // Else flag as nonnumeric and continue
+                numeric = false;
+            }
+        }
+        // We got to beginning of string with only numbers, count start as a delimiter
+        // and exit
+        return numbers + 1;
+    }
+
+    /**
+     * Get a String in a line of text between two marker strings
+     *
+     * @param text
+     *            Text to search for match
+     * @param before
+     *            Start matching after this text
+     * @param after
+     *            End matching before this text
+     * @return Text between the strings before and after, or empty string if either
+     *         marker does not exist
+     */
+    public static String getTextBetweenStrings(String text, String before, String after) {
+
+        String result = "";
+
+        if (text.indexOf(before) >= 0 && text.indexOf(after) >= 0) {
+            result = text.substring(text.indexOf(before) + before.length(), text.length());
+            result = result.substring(0, result.indexOf(after));
+        }
+        return result;
+    }
+
+    /**
+     * Convert a long representing filetime (100-ns since 1601 epoch) to ms since
+     * 1970 epoch
+     *
+     * @param filetime
+     *            A 64-bit value equivalent to FILETIME
+     * @param local
+     *            True if converting from a local filetime (PDH counter); false if
+     *            already UTC (WMI PerfRawData classes)
+     * @return Equivalent milliseconds since the epoch
+     */
+    public static long filetimeToUtcMs(long filetime, boolean local) {
+        return filetime / 10_000L - EPOCH_DIFF - (local ? TZ_OFFSET : 0L);
+    }
+
+    /**
+     * Parse a date in MM-DD-YYYY or MM/DD/YYYY to YYYY-MM-DD
+     *
+     * @param dateString
+     *            The date in MM DD YYYY format
+     * @return The date in ISO YYYY-MM-DD format if parseable, or the original
+     *         string
+     */
+    public static String parseMmDdYyyyToYyyyMmDD(String dateString) {
+        try {
+            // Date is MM-DD-YYYY, convert to YYYY-MM-DD
+            return String.format("%s-%s-%s", dateString.substring(6, 10), dateString.substring(0, 2),
+                    dateString.substring(3, 5));
+        } catch (StringIndexOutOfBoundsException e) {
+            return dateString;
+        }
+    }
+
+    /**
+     * Converts a string in CIM Date Format, as returned by WMI for DateTime types,
+     * into a {@link java.time.OffsetDateTime}.
+     *
+     * @param cimDateTime
+     *            A non-null DateTime String in CIM date format, e.g.,
+     *            <code>20160513072950.782000-420</code>
+     * @return The parsed {@link java.time.OffsetDateTime} if the string is
+     *         parsable, otherwise {@link oshi.util.Constants#UNIX_EPOCH}.
+     */
+    public static OffsetDateTime parseCimDateTimeToOffset(String cimDateTime) {
+        // Keep first 22 characters: digits, decimal, and + or - sign
+        // But alter last 3 characters from a minute offset to hh:mm
+        try {
+            // From WMI as 20160513072950.782000-420,
+            int tzInMinutes = Integer.parseInt(cimDateTime.substring(22));
+            // modified to 20160513072950.782000-07:00 which can be parsed
+            LocalTime offsetAsLocalTime = LocalTime.MIDNIGHT.plusMinutes(tzInMinutes);
+            return OffsetDateTime.parse(
+                    cimDateTime.substring(0, 22) + offsetAsLocalTime.format(DateTimeFormatter.ISO_LOCAL_TIME),
+                    ParseUtil.CIM_FORMAT);
+        } catch (IndexOutOfBoundsException // if cimDate not 22+ chars
+                | NumberFormatException // if TZ minutes doesn't parse
+                | DateTimeParseException e) {
+            LOG.trace("Unable to parse {} to CIM DateTime.", cimDateTime);
+            return Constants.UNIX_EPOCH;
+        }
+    }
+
+    /**
+     * Checks if a file path equals or starts with an prefix in the given list
+     *
+     * @param prefixList
+     *            A list of path prefixes
+     * @param path
+     *            a string path to check
+     * @return true if the path exactly equals, or starts with one of the strings in
+     *         prefixList
+     */
+    public static boolean filePathStartsWith(List<String> prefixList, String path) {
+        for (String match : prefixList) {
+            if (path.equals(match) || path.startsWith(match + "/")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Parses a string such as "4096 MB" to its long. Used to parse macOS and *nix
+     * memory chip sizes. Although the units given are decimal they must parse to
+     * binary units.
+     *
+     * @param size
+     *            A string of memory sizes like "4096 MB"
+     * @return the size parsed to a long
+     */
+    public static long parseDecimalMemorySizeToBinary(String size) {
+        String[] mem = ParseUtil.whitespaces.split(size);
+        long capacity = ParseUtil.parseLongOrDefault(mem[0], 0L);
+        if (mem.length == 2 && mem[1].length() > 1) {
+            switch (mem[1].charAt(0)) {
+            case 'T':
+                capacity <<= 40;
+                break;
+            case 'G':
+                capacity <<= 30;
+                break;
+            case 'M':
+                capacity <<= 20;
+                break;
+            case 'K':
+            case 'k':
+                capacity <<= 10;
+                break;
+            default:
+                break;
+            }
+        }
+        return capacity;
+    }
+
+    /**
+     * Parse a Windows PnPDeviceID to get the vendor ID and product ID.
+     *
+     * @param pnpDeviceId
+     *            The PnPDeviceID
+     * @return A {@link Pair} where the first element is the vendor ID and second
+     *         element is the product ID, if parsing was successful, or {@code null}
+     *         otherwise
+     */
+    public static Pair<String, String> parsePnPDeviceIdToVendorProductId(String pnpDeviceId) {
+        Matcher m = VENDOR_PRODUCT_ID.matcher(pnpDeviceId);
+        if (m.matches()) {
+            String vendorId = "0x" + m.group(1).toLowerCase();
+            String productId = "0x" + m.group(2).toLowerCase();
+            return new Pair<>(vendorId, productId);
+        }
+        return null;
+    }
+
+    /**
+     * Parse a Linux lshw resources string to calculate the memory size
+     *
+     * @param resources
+     *            A string containing one or more elements of the form
+     *            {@code memory:b00000000-bffffffff}
+     * @return The number of bytes consumed by the memory in the {@code resources}
+     *         string
+     */
+    public static long parseLshwResourceString(String resources) {
+        long bytes = 0L;
+        // First split by whitespace
+        String[] resourceArray = whitespaces.split(resources);
+        for (String r : resourceArray) {
+            // Remove prefix
+            if (r.startsWith("memory:")) {
+                // Split to low and high
+                String[] mem = r.substring(7).split("-");
+                if (mem.length == 2) {
+                    try {
+                        // Parse the hex strings
+                        bytes += Long.parseLong(mem[1], 16) - Long.parseLong(mem[0], 16) + 1;
+                    } catch (NumberFormatException e) {
+                        LOG.trace(DEFAULT_LOG_MSG, r, e);
+                    }
+                }
+            }
+        }
+        return bytes;
+    }
+
+    /**
+     * Parse a Linux lspci machine readble line to its name and id
+     *
+     * @param line
+     *            A string in the form Foo [bar]
+     * @return A pair separating the String before the square brackets and within
+     *         them if found, null otherwise
+     */
+    public static Pair<String, String> parseLspciMachineReadable(String line) {
+        Matcher matcher = LSPCI_MACHINE_READABLE.matcher(line);
+        if (matcher.matches()) {
+            return new Pair<>(matcher.group(1), matcher.group(2));
+        }
+        return null;
+    }
+
+    /**
+     * Parse a Linux lspci line containing memory size
+     *
+     * @param line
+     *            A string in the form Foo [size=256M]
+     * @return A the memory size in bytes
+     */
+    public static long parseLspciMemorySize(String line) {
+        Matcher matcher = LSPCI_MEMORY_SIZE.matcher(line);
+        if (matcher.matches()) {
+            return parseDecimalMemorySizeToBinary(matcher.group(1) + " " + matcher.group(2) + "B");
+        }
+        return 0;
+    }
+
+    /**
+     * Parse a space-delimited list of integers which include hyphenated ranges to a
+     * list of just the integers. For example, 0 1 4-7 parses to a list containing
+     * 0, 1, 4, 5, 6, and 7.
+     *
+     * @param str
+     *            A string containing space-delimited integers or ranges of integers
+     *            with a hyphen
+     * @return A list of integers representing the provided range(s).
+     */
+    public static List<Integer> parseHyphenatedIntList(String str) {
+        List<Integer> result = new ArrayList<>();
+        for (String s : whitespaces.split(str)) {
+            if (s.contains("-")) {
+                int first = getFirstIntValue(s);
+                int last = getNthIntValue(s, 2);
+                for (int i = first; i <= last; i++) {
+                    result.add(i);
+                }
+            } else {
+                int only = ParseUtil.parseIntOrDefault(s, -1);
+                if (only >= 0) {
+                    result.add(only);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Parse an integer array to an IPv4 or IPv6 as appropriate.
+     * <p>
+     * Intended for use on Utmp structures's {@code ut_addr_v6} element.
+     *
+     * @param utAddrV6
+     *            An array of 4 integers representing an IPv6 address. IPv4 address
+     *            uses just utAddrV6[0]
+     * @return A string representation of the IP address.
+     */
+    public static String parseUtAddrV6toIP(int[] utAddrV6) {
+        if (utAddrV6.length != 4) {
+            throw new IllegalArgumentException("ut_addr_v6 must have exactly 4 elements");
+        }
+        // IPv4 has only first element
+        if (utAddrV6[1] == 0 && utAddrV6[2] == 0 && utAddrV6[3] == 0) {
+            // Special case for all 0's
+            if (utAddrV6[0] == 0) {
+                return "::";
+            }
+            // Parse using InetAddress
+            byte[] ipv4 = ByteBuffer.allocate(4).putInt(utAddrV6[0]).array();
+            try {
+                return InetAddress.getByAddress(ipv4).getHostAddress();
+            } catch (UnknownHostException e) {
+                // Shouldn't happen with length 4 or 16
+                return Constants.UNKNOWN;
+            }
+        }
+        // Parse all 16 bytes
+        byte[] ipv6 = ByteBuffer.allocate(16).putInt(utAddrV6[0]).putInt(utAddrV6[1]).putInt(utAddrV6[2])
+                .putInt(utAddrV6[3]).array();
+        try {
+            return InetAddress.getByAddress(ipv6).getHostAddress()
+                    .replaceAll("((?:(?:^|:)0+\\b){2,}):?(?!\\S*\\b\\1:0+\\b)(\\S*)", "::$2");
+        } catch (UnknownHostException e) {
+            // Shouldn't happen with length 4 or 16
+            return Constants.UNKNOWN;
+        }
     }
 }

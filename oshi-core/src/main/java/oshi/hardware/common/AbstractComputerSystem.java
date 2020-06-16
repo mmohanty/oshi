@@ -1,129 +1,77 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware.common;
 
+import static oshi.util.Memoizer.memoize;
+
+import java.util.function.Supplier;
+
+import oshi.annotation.concurrent.Immutable;
 import oshi.hardware.Baseboard;
 import oshi.hardware.ComputerSystem;
 import oshi.hardware.Firmware;
 
 /**
- * Hardware data
- *
- * @author SchiTho1 [at] Securiton AG
- * @author widdis [at] gmail [dot] com
+ * Computer System data.
  */
+@Immutable
 public abstract class AbstractComputerSystem implements ComputerSystem {
 
-    private static final long serialVersionUID = 1L;
+    private final Supplier<Firmware> firmware = memoize(this::createFirmware);
 
-    private String manufacturer;
-    private String model;
-    private String serialNumber;
-    private Firmware firmware;
-    private Baseboard baseboard;
+    private final Supplier<Baseboard> baseboard = memoize(this::createBaseboard);
 
-    protected AbstractComputerSystem() {
-        this.manufacturer = "unknown";
-        this.model = "unknown";
-        this.serialNumber = "unknown";
-        this.firmware = null;
-        this.baseboard = null;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String getManufacturer() {
-        return this.manufacturer;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String getModel() {
-        return this.model;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String getSerialNumber() {
-        return this.serialNumber;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public Firmware getFirmware() {
-        return this.firmware;
+        return firmware.get();
     }
 
     /**
-     * {@inheritDoc}
+     * Instantiates the platform-specific {@link Firmware} object
+     *
+     * @return platform-specific {@link Firmware} object
      */
+    protected abstract Firmware createFirmware();
+
     @Override
     public Baseboard getBaseboard() {
-        return this.baseboard;
+        return baseboard.get();
     }
 
     /**
-     * @param manufacturer
-     *            The manufacturer to set.
+     * Instantiates the platform-specific {@link Baseboard} object
+     *
+     * @return platform-specific {@link Baseboard} object
      */
-    protected void setManufacturer(String manufacturer) {
-        this.manufacturer = manufacturer;
-    }
+    protected abstract Baseboard createBaseboard();
 
-    /**
-     * @param model
-     *            The model to set.
-     */
-    protected void setModel(String model) {
-        this.model = model;
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("manufacturer=").append(getManufacturer()).append(", ");
+        sb.append("model=").append(getModel()).append(", ");
+        sb.append("serial number=").append(getSerialNumber());
+        return sb.toString();
     }
-
-    /**
-     * @param serialNumber
-     *            The serialNumber to set.
-     */
-    protected void setSerialNumber(String serialNumber) {
-        this.serialNumber = serialNumber;
-    }
-
-    /**
-     * @param firmware
-     *            The firmware to set.
-     */
-    protected void setFirmware(Firmware firmware) {
-        this.firmware = firmware;
-    }
-
-    /**
-     * @param baseboard
-     *            The baseboard to set.
-     */
-    protected void setBaseboard(Baseboard baseboard) {
-        this.baseboard = baseboard;
-    }
-
 }

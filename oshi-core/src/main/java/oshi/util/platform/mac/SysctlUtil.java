@@ -1,40 +1,46 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.util.platform.mac;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.sun.jna.Memory;
+import com.sun.jna.Memory; // NOSONAR squid:S1191
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
+import com.sun.jna.platform.mac.SystemB;
 import com.sun.jna.ptr.IntByReference;
 
-import oshi.jna.platform.mac.SystemB;
+import oshi.annotation.concurrent.ThreadSafe;
 
 /**
  * Provides access to sysctl calls on OS X
- *
- * @author widdis[at]gmail[dot]com
  */
-public class SysctlUtil {
+@ThreadSafe
+public final class SysctlUtil {
+
     private static final Logger LOG = LoggerFactory.getLogger(SysctlUtil.class);
 
     private static final String SYSCTL_FAIL = "Failed syctl call: {}, Error code: {}";
@@ -87,8 +93,7 @@ public class SysctlUtil {
      *            name of the sysctl
      * @param def
      *            default String value
-     * @return The String result of the call if successful; the default
-     *         otherwise
+     * @return The String result of the call if successful; the default otherwise
      */
     public static String sysctl(String name, String def) {
         // Call first time with null pointer to get value of size
@@ -98,7 +103,7 @@ public class SysctlUtil {
             return def;
         }
         // Add 1 to size for null terminated string
-        Pointer p = new Memory(size.getValue() + 1);
+        Pointer p = new Memory(size.getValue() + 1L);
         if (0 != SystemB.INSTANCE.sysctlbyname(name, p, size, null, 0)) {
             LOG.error(SYSCTL_FAIL, name, Native.getLastError());
             return def;

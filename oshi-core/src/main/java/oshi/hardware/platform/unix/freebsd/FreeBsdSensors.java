@@ -1,74 +1,75 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware.platform.unix.freebsd;
 
-import com.sun.jna.Memory;
+import com.sun.jna.Memory; // NOSONAR squid:S1191
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 
-import oshi.hardware.Sensors;
-import oshi.jna.platform.unix.freebsd.Libc;
+import oshi.annotation.concurrent.ThreadSafe;
+import oshi.hardware.common.AbstractSensors;
+import oshi.jna.platform.unix.freebsd.FreeBsdLibc;
 
-public class FreeBsdSensors implements Sensors {
+/**
+ * Sensors from coretemp
+ */
+@ThreadSafe
+final class FreeBsdSensors extends AbstractSensors {
 
-    private static final long serialVersionUID = 1L;
-
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public double getCpuTemperature() {
-        // Try with kldload coretemp
-        double sumTemp = 0d;
-        int cpu = 0;
+    public double queryCpuTemperature() {
+        return queryKldloadCoretemp();
+    }
+
+    /*
+     * If user has loaded coretemp module via kldload coretemp, sysctl call will
+     * return temperature
+     *
+     * @return Tempurature if successful, otherwise NaN
+     */
+    private static double queryKldloadCoretemp() {
         String name = "dev.cpu.%d.temperature";
-        while (true) {
-            IntByReference size = new IntByReference(Libc.INT_SIZE);
-            Pointer p = new Memory(size.getValue());
-            if (0 != Libc.INSTANCE.sysctlbyname(String.format(name, cpu), p, size, null, 0)) {
-                break;
-            }
+        IntByReference size = new IntByReference(FreeBsdLibc.INT_SIZE);
+        Pointer p = new Memory(size.getValue());
+        int cpu = 0;
+        double sumTemp = 0d;
+        while (0 == FreeBsdLibc.INSTANCE.sysctlbyname(String.format(name, cpu), p, size, null, 0)) {
             sumTemp += p.getInt(0) / 10d - 273.15;
             cpu++;
         }
-        if (cpu > 0) {
-            return sumTemp / cpu;
-        }
-        // TODO try other ways here
-        return 0d;
+        return cpu > 0 ? sumTemp / cpu : Double.NaN;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public int[] getFanSpeeds() {
-        // TODO try common software
+    public int[] queryFanSpeeds() {
+        // Nothing known on FreeBSD for this.
         return new int[0];
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
-    public double getCpuVoltage() {
-        // TODO try common software
+    public double queryCpuVoltage() {
+        // Nothing known on FreeBSD for this.
         return 0d;
     }
 }

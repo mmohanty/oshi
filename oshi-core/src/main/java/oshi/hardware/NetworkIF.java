@@ -1,330 +1,304 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware;
 
-import java.io.Serializable;
-import java.net.InetAddress;
 import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import oshi.SystemInfo;
-import oshi.hardware.platform.linux.LinuxNetworks;
-import oshi.hardware.platform.mac.MacNetworks;
-import oshi.hardware.platform.unix.freebsd.FreeBsdNetworks;
-import oshi.hardware.platform.unix.solaris.SolarisNetworks;
-import oshi.hardware.platform.windows.WindowsNetworks;
-import oshi.util.FormatUtil;
+import oshi.annotation.concurrent.ThreadSafe;
 
 /**
- * A network interface in the machine, including statistics
- *
- * @author enrico[dot]bianchi[at]gmail[dot]com
+ * A network interface in the machine, including statistics.
+ * <p>
+ * Thread safe for the designed use of retrieving the most recent data. Users
+ * should be aware that the {@link #updateAttributes()} method may update
+ * attributes, including the time stamp, and should externally synchronize such
+ * usage to ensure consistent calculations.
  */
-public class NetworkIF implements Serializable {
-
-    private static final long serialVersionUID = 2L;
-
-    private static final Logger LOG = LoggerFactory.getLogger(NetworkIF.class);
-
-    private transient NetworkInterface networkInterface;
-    private int mtu;
-    private String mac;
-    private String[] ipv4;
-    private String[] ipv6;
-    private long bytesRecv;
-    private long bytesSent;
-    private long packetsRecv;
-    private long packetsSent;
-    private long inErrors;
-    private long outErrors;
-    private long speed;
-    private long timeStamp;
+@ThreadSafe
+public interface NetworkIF {
 
     /**
-     * @return the network interface
-     */
-    public NetworkInterface getNetworkInterface() {
-        return this.networkInterface;
-    }
-
-    /**
-     * Sets the network interface and calculates other information derived from
-     * it
+     * Gets the {@link java.net.NetworkInterface} object.
      *
-     * @param networkInterface
-     *            The network interface to set
+     * @return the network interface, an instance of
+     *         {@link java.net.NetworkInterface}.
      */
-    public void setNetworkInterface(NetworkInterface networkInterface) {
-        this.networkInterface = networkInterface;
-        try {
-            // Set MTU
-            this.mtu = networkInterface.getMTU();
-            // Set MAC
-            byte[] hwmac = networkInterface.getHardwareAddress();
-            if (hwmac != null) {
-                List<String> octets = new ArrayList<>(6);
-                for (byte b : hwmac) {
-                    octets.add(String.format("%02x", b));
-                }
-                this.mac = FormatUtil.join(":", octets);
-            } else {
-                this.mac = "Unknown";
-            }
-            // Set IP arrays
-            ArrayList<String> ipv4list = new ArrayList<>();
-            ArrayList<String> ipv6list = new ArrayList<>();
-            for (InetAddress address : Collections.list(networkInterface.getInetAddresses())) {
-                if (address.getHostAddress().length() > 0) {
-                    if (address.getHostAddress().contains(":")) {
-                        ipv6list.add(address.getHostAddress().split("%")[0]);
-                    } else {
-                        ipv4list.add(address.getHostAddress());
-                    }
-                }
-            }
-            this.ipv4 = ipv4list.toArray(new String[ipv4list.size()]);
-            this.ipv6 = ipv6list.toArray(new String[ipv6list.size()]);
-        } catch (SocketException e) {
-            LOG.error("Socket exception: {}", e);
-        }
-    }
+    NetworkInterface queryNetworkInterface();
 
     /**
+     * Interface name.
+     *
      * @return The interface name.
      */
-    public String getName() {
-        return this.networkInterface.getName();
-    }
+    String getName();
 
     /**
-     * @return The description of the network interface. On some platforms, this
-     *         is identical to the name.
+     * Interface description.
+     *
+     * @return The description of the network interface. On some platforms, this is
+     *         identical to the name.
      */
-    public String getDisplayName() {
-        return this.networkInterface.getDisplayName();
-    }
+    String getDisplayName();
 
     /**
-     * @return The MTU of the network interface. This value is set when the
-     *         {@link NetworkIF} is instantiated and may not be up to date. To
-     *         update this value, execute the
-     *         {@link #setNetworkInterface(NetworkInterface)} method
+     * The interface Maximum Transmission Unit (MTU).
+     *
+     * @return The MTU of the network interface.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date.
      */
-    public int getMTU() {
-        return this.mtu;
-    }
+    int getMTU();
 
     /**
-     * @return The MAC Address. This value is set when the {@link NetworkIF} is
-     *         instantiated and may not be up to date. To update this value,
-     *         execute the {@link #setNetworkInterface(NetworkInterface)} method
+     * The Media Access Control (MAC) address.
+     *
+     * @return The MAC Address.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date.
      */
-    public String getMacaddr() {
-        return this.mac;
-    }
+    String getMacaddr();
 
     /**
-     * @return The IPv4 Addresses. This value is set when the {@link NetworkIF}
-     *         is instantiated and may not be up to date. To update this value,
-     *         execute the {@link #setNetworkInterface(NetworkInterface)} method
+     * The Internet Protocol (IP) v4 address.
+     *
+     * @return An array of IPv4 Addresses.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date.
      */
-    public String[] getIPv4addr() {
-        return Arrays.copyOf(this.ipv4, this.ipv4.length);
-    }
+    String[] getIPv4addr();
 
     /**
-     * @return The IPv6 Addresses. This value is set when the {@link NetworkIF}
-     *         is instantiated and may not be up to date. To update this value,
-     *         execute the {@link #setNetworkInterface(NetworkInterface)} method
+     * The Internet Protocol (IP) v4 subnet masks.
+     *
+     * @return An array of IPv4 subnet mask lengths, corresponding to the IPv4
+     *         addresses from {@link #getIPv4addr()}. Ranges between 0-32.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date.
+     *
      */
-    public String[] getIPv6addr() {
-        return Arrays.copyOf(this.ipv6, this.ipv6.length);
-    }
+    Short[] getSubnetMasks();
 
     /**
-     * @return The Bytes Received. This value is set when the {@link NetworkIF}
-     *         is instantiated and may not be up to date. To update this value,
-     *         execute the {@link #updateNetworkStats()} method
+     * The Internet Protocol (IP) v6 address.
+     *
+     * @return An array of IPv6 Addresses.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date.
      */
-    public long getBytesRecv() {
-        return this.bytesRecv;
-    }
+    String[] getIPv6addr();
 
     /**
-     * @param bytesRecv
-     *            Set Bytes Received
+     * The Internet Protocol (IP) v6 address.
+     *
+     * @return The IPv6 address prefix lengths, corresponding to the IPv6 addresses
+     *         from {@link #getIPv6addr()}. Ranges between 0-128.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date.
      */
-    public void setBytesRecv(long bytesRecv) {
-        this.bytesRecv = bytesRecv & 0x7fffffffffffffffL;
-    }
+    Short[] getPrefixLengths();
 
     /**
-     * @return The Bytes Sent. This value is set when the {@link NetworkIF} is
-     *         instantiated and may not be up to date. To update this value,
-     *         execute the {@link #updateNetworkStats()} method
+     * (Windows, macOS) The NDIS Interface Type. NDIS interface types are registered
+     * with the Internet Assigned Numbers Authority (IANA), which publishes a list
+     * of interface types periodically in the Assigned Numbers RFC, or in a
+     * derivative of it that is specific to Internet network management number
+     * assignments.
+     * <p>
+     * (Linux) ARP Protocol hardware identifiers defined in
+     * {@code include/uapi/linux/if_arp.h}
+     *
+     * @return the ifType
      */
-    public long getBytesSent() {
-        return this.bytesSent;
-    }
+    int getIfType();
 
     /**
-     * @param bytesSent
-     *            Set the Bytes Sent
+     * (Windows Vista and higher only) The NDIS physical medium type. This member
+     * can be one of the values from the {@code NDIS_PHYSICAL_MEDIUM} enumeration
+     * type defined in the {@code Ntddndis.h} header file.
+     *
+     * @return the ndisPhysicalMediumType
      */
-    public void setBytesSent(long bytesSent) {
-        this.bytesSent = bytesSent & 0x7fffffffffffffffL;
-    }
+    int getNdisPhysicalMediumType();
 
     /**
-     * @return The Packets Received. This value is set when the
-     *         {@link NetworkIF} is instantiated and may not be up to date. To
-     *         update this value, execute the {@link #updateNetworkStats()}
-     *         method
+     * (Windows Vista and higher) Set if a connector is present on the network
+     * interface.
+     * <p>
+     * (Linux) Indicates the current physical link state of the interface.
+     *
+     * @return {@code true} if there is a physical network adapter (Windows) or a
+     *         connected cable (Linux), false otherwise
      */
-    public long getPacketsRecv() {
-        return this.packetsRecv;
-    }
+    boolean isConnectorPresent();
 
     /**
-     * @param packetsRecv
-     *            Set The Packets Received
+     * <p>
+     * Getter for the field <code>bytesRecv</code>.
+     * </p>
+     *
+     * @return The Bytes Received.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public void setPacketsRecv(long packetsRecv) {
-        this.packetsRecv = packetsRecv & 0x7fffffffffffffffL;
-    }
+    long getBytesRecv();
 
     /**
-     * @return The Packets Sent. This value is set when the {@link NetworkIF} is
-     *         instantiated and may not be up to date. To update this value,
-     *         execute the {@link #updateNetworkStats()} method
+     * <p>
+     * Getter for the field <code>bytesSent</code>.
+     * </p>
+     *
+     * @return The Bytes Sent.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public long getPacketsSent() {
-        return this.packetsSent;
-    }
+    long getBytesSent();
 
     /**
-     * @param packetsSent
-     *            Set The Packets Sent
+     * <p>
+     * Getter for the field <code>packetsRecv</code>.
+     * </p>
+     *
+     * @return The Packets Received.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public void setPacketsSent(long packetsSent) {
-        this.packetsSent = packetsSent & 0x7fffffffffffffffL;
-    }
+    long getPacketsRecv();
 
     /**
-     * @return Input Errors. This value is set when the {@link NetworkIF} is
-     *         instantiated and may not be up to date. To update this value,
-     *         execute the {@link #updateNetworkStats()} method
+     * <p>
+     * Getter for the field <code>packetsSent</code>.
+     * </p>
+     *
+     * @return The Packets Sent.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public long getInErrors() {
-        return this.inErrors;
-    }
+    long getPacketsSent();
 
     /**
-     * @param inErrors
-     *            The Input Errors to set.
+     * <p>
+     * Getter for the field <code>inErrors</code>.
+     * </p>
+     *
+     * @return Input Errors.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public void setInErrors(long inErrors) {
-        this.inErrors = inErrors & 0x7fffffffffffffffL;
-    }
+    long getInErrors();
 
     /**
-     * @return The Output Errors. This value is set when the {@link NetworkIF}
-     *         is instantiated and may not be up to date. To update this value,
-     *         execute the {@link #updateNetworkStats()} method
+     * <p>
+     * Getter for the field <code>outErrors</code>.
+     * </p>
+     *
+     * @return The Output Errors.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public long getOutErrors() {
-        return this.outErrors;
-    }
+    long getOutErrors();
 
     /**
-     * @param outErrors
-     *            The Output Errors to set.
+     * <p>
+     * Getter for the field <code>inDrops</code>.
+     * </p>
+     *
+     * @return Incoming/Received dropped packets. On Windows, returns discarded
+     *         incoming packets.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public void setOutErrors(long outErrors) {
-        this.outErrors = outErrors & 0x7fffffffffffffffL;
-    }
+    long getInDrops();
 
     /**
-     * @return The speed of the network interface in bits per second. This value
-     *         is set when the {@link NetworkIF} is instantiated and may not be
-     *         up to date. To update this value, execute the
-     *         {@link #updateNetworkStats()} method
+     * <p>
+     * Getter for the field <code>collisions</code>.
+     * </p>
+     *
+     * @return Packet collisions. On Windows, returns discarded outgoing packets.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public long getSpeed() {
-        return this.speed;
-    }
+    long getCollisions();
 
     /**
-     * @param speed
-     *            Set the speed of the network interface
+     * <p>
+     * Getter for the field <code>speed</code>.
+     * </p>
+     *
+     * @return The speed of the network interface in bits per second.
+     *         <p>
+     *         This value is set when the {@link oshi.hardware.NetworkIF} is
+     *         instantiated and may not be up to date. To update this value, execute
+     *         the {@link #updateAttributes()} method
      */
-    public void setSpeed(long speed) {
-        this.speed = speed & 0x7fffffffffffffffL;
-    }
+    long getSpeed();
 
     /**
+     * <p>
+     * Getter for the field <code>timeStamp</code>.
+     * </p>
+     *
      * @return Returns the timeStamp.
      */
-    public long getTimeStamp() {
-        return this.timeStamp;
-    }
+    long getTimeStamp();
 
     /**
-     * @param timeStamp
-     *            The timeStamp to set.
+     * Determines if the MAC address on this interface corresponds to a known
+     * Virtual Machine.
+     *
+     * @return {@code true} if the MAC address corresponds to a known virtual
+     *         machine.
      */
-    public void setTimeStamp(long timeStamp) {
-        this.timeStamp = timeStamp;
-    }
+    boolean isKnownVmMacAddr();
 
     /**
-     * Updates interface network statistics on this interface. Statistics
-     * include packets and bytes sent and received, and interface speed.
+     * Updates interface network statistics on this interface. Statistics include
+     * packets and bytes sent and received, and interface speed.
+     *
+     * @return {@code true} if the update was successful, {@code false} otherwise.
      */
-    public void updateNetworkStats() {
-        switch (SystemInfo.getCurrentPlatformEnum()) {
-        case WINDOWS:
-            WindowsNetworks.updateNetworkStats(this);
-            break;
-        case LINUX:
-            LinuxNetworks.updateNetworkStats(this);
-            break;
-        case MACOSX:
-            MacNetworks.updateNetworkStats(this);
-            break;
-        case SOLARIS:
-            SolarisNetworks.updateNetworkStats(this);
-            break;
-        case FREEBSD:
-            FreeBsdNetworks.updateNetworkStats(this);
-            break;
-        default:
-            LOG.error("Unsupported platform. No update performed.");
-            break;
-        }
-    }
-
+    boolean updateAttributes();
 }

@@ -1,31 +1,38 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.software.common;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import oshi.annotation.concurrent.ThreadSafe;
 import oshi.software.os.NetworkParams;
 import oshi.util.FileUtil;
 import oshi.util.ParseUtil;
@@ -33,29 +40,22 @@ import oshi.util.ParseUtil;
 /**
  * Common NetworkParams implementation.
  */
+@ThreadSafe
 public abstract class AbstractNetworkParams implements NetworkParams {
-
-    private static final long serialVersionUID = 1L;
 
     private static final Logger LOG = LoggerFactory.getLogger(AbstractNetworkParams.class);
     private static final String NAMESERVER = "nameserver";
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public String getDomainName() {
         try {
             return InetAddress.getLocalHost().getCanonicalHostName();
         } catch (UnknownHostException e) {
-            LOG.error("Unknown host exception when getting address of local host: " + e);
+            LOG.error("Unknown host exception when getting address of local host: {}", e.getMessage());
             return "";
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public String getHostName() {
         try {
@@ -67,14 +67,11 @@ public abstract class AbstractNetworkParams implements NetworkParams {
                 return hn.substring(0, dot);
             }
         } catch (UnknownHostException e) {
-            LOG.error("Unknown host exception when getting address of local host: " + e);
+            LOG.error("Unknown host exception when getting address of local host: {}", e.getMessage());
             return "";
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public String[] getDnsServers() {
         List<String> resolv = FileUtil.readFile("/etc/resolv.conf");
@@ -91,7 +88,7 @@ public abstract class AbstractNetworkParams implements NetworkParams {
                 }
             }
         }
-        return servers.toArray(new String[servers.size()]);
+        return servers.toArray(new String[0]);
     }
 
     /**
@@ -114,5 +111,13 @@ public abstract class AbstractNetworkParams implements NetworkParams {
             }
         }
         return "";
+    }
+
+    @Override
+    public String toString() {
+        return String.format("Host name: %s, Domain name: %s, DNS servers: %s, IPv4 Gateway: %s, IPv6 Gateway: %s",
+                this.getHostName(), this.getDomainName(), Arrays.toString(this.getDnsServers()),
+                this.getIpv4DefaultGateway(), this.getIpv6DefaultGateway());
+
     }
 }

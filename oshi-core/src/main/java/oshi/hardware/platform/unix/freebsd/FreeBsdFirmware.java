@@ -1,35 +1,71 @@
 /**
- * Oshi (https://github.com/oshi/oshi)
+ * MIT License
  *
- * Copyright (c) 2010 - 2018 The Oshi Project Team
+ * Copyright (c) 2010 - 2020 The OSHI Project Contributors: https://github.com/oshi/oshi/graphs/contributors
  *
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Maintainers:
- * dblock[at]dblock[dot]org
- * widdis[at]gmail[dot]com
- * enrico.bianchi[at]gmail[dot]com
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  *
- * Contributors:
- * https://github.com/oshi/oshi/graphs/contributors
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 package oshi.hardware.platform.unix.freebsd;
 
-import oshi.hardware.common.AbstractFirmware;
-import oshi.util.ExecutingCommand;
+import static oshi.util.Memoizer.memoize;
 
+import java.util.function.Supplier;
+
+import oshi.annotation.concurrent.Immutable;
+import oshi.hardware.common.AbstractFirmware;
+import oshi.util.Constants;
+import oshi.util.ExecutingCommand;
+import oshi.util.ParseUtil;
+import oshi.util.Util;
+import oshi.util.tuples.Triplet;
+
+/**
+ * Firmware information from dmidecode
+ */
+@Immutable
 final class FreeBsdFirmware extends AbstractFirmware {
 
-    private static final long serialVersionUID = 1L;
+    private final Supplier<Triplet<String, String, String>> manufVersRelease = memoize(FreeBsdFirmware::readDmiDecode);
 
-    FreeBsdFirmware() {
-        init();
+    @Override
+    public String getManufacturer() {
+        return manufVersRelease.get().getA();
     }
 
-    private void init() {
+    @Override
+    public String getVersion() {
+        return manufVersRelease.get().getB();
+    }
+
+    @Override
+    public String getReleaseDate() {
+        return manufVersRelease.get().getC();
+    }
+
+    /*
+     * Name and Description not set
+     */
+
+    private static Triplet<String, String, String> readDmiDecode() {
+        String manufacturer = null;
+        String version = null;
+        String releaseDate = "";
 
         // $ sudo dmidecode -t bios
         // # dmidecode 3.0
@@ -45,11 +81,8 @@ final class FreeBsdFirmware extends AbstractFirmware {
         // BIOS Revision: 11.2
         // Firmware Revision: 11.2
 
-        String manufacturer = "";
         final String manufacturerMarker = "Vendor:";
-        String version = "";
         final String versionMarker = "Version:";
-        String releaseDate = "";
         final String releaseDateMarker = "Release Date:";
 
         // Only works with root permissions but it's all we've got
@@ -62,20 +95,9 @@ final class FreeBsdFirmware extends AbstractFirmware {
                 releaseDate = checkLine.split(releaseDateMarker)[1].trim();
             }
         }
-        if (!manufacturer.isEmpty()) {
-            setManufacturer(manufacturer);
-        }
-        if (!version.isEmpty()) {
-            setVersion(version);
-        }
-        if (!releaseDate.isEmpty()) {
-            try {
-                // Date is MM-DD-YYYY, convert to YYYY-MM-DD
-                setReleaseDate(String.format("%s-%s-%s", releaseDate.substring(6, 10), releaseDate.substring(0, 2),
-                        releaseDate.substring(3, 5)));
-            } catch (StringIndexOutOfBoundsException e) {
-                setReleaseDate(releaseDate);
-            }
-        }
+        releaseDate = ParseUtil.parseMmDdYyyyToYyyyMmDD(releaseDate);
+        return new Triplet<>(Util.isBlank(manufacturer) ? Constants.UNKNOWN : manufacturer,
+                Util.isBlank(version) ? Constants.UNKNOWN : version,
+                Util.isBlank(releaseDate) ? Constants.UNKNOWN : releaseDate);
     }
 }
